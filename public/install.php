@@ -1,0 +1,81 @@
+<?php
+declare(strict_types=1);
+
+session_name('app_installer');
+session_start();
+function installer_can_write_directory(string $directory): bool {
+    $parent=is_dir($directory)?$directory:dirname($directory);
+    if(!is_dir($parent)||!is_writable($parent))return false;
+    $probe=$parent.'/.installer-write-'.bin2hex(random_bytes(6));
+    if(@file_put_contents($probe,'ok',LOCK_EX)===false)return false;
+    @unlink($probe);return true;
+}
+$externalPrivateRoot=dirname(__DIR__).'/private';
+$internalPrivateRoot=__DIR__.'/private';
+$privateModeDefault=installer_can_write_directory($externalPrivateRoot)?'external':'internal';
+$privateRoot=is_file($externalPrivateRoot.'/src/bootstrap.php')?$externalPrivateRoot:$internalPrivateRoot;
+$publicRoot=__DIR__;
+$configPath=$privateRoot.'/config.php';
+$packageName='RecordStore';
+$packageVersion=trim((string)@file_get_contents(dirname(__DIR__).'/VERSION.txt'))?:'1.0.0';
+$errors=[];$success='';
+
+function installer_e(mixed $v): string { return htmlspecialchars((string)($v??''),ENT_QUOTES,'UTF-8'); }
+function installer_token(): string { if(empty($_SESSION['installer_token']))$_SESSION['installer_token']=bin2hex(random_bytes(32));return $_SESSION['installer_token']; }
+function installer_sql(PDO $pdo,string $sql): void {
+    foreach(preg_split('/;\s*(?:\r?\n|$)/',$sql,-1,PREG_SPLIT_NO_EMPTY) as $statement){
+        $statement=trim($statement);if($statement===''||str_starts_with($statement,'--'))continue;
+        try{$pdo->exec($statement);}catch(PDOException $e){$message=$e->getMessage();if(!preg_match('/SQLSTATE\[42S01\]|SQLSTATE\[42S21\]|1060|1050|1061|1826|already exists|Duplicate column|Duplicate key/i',$message))throw $e;}
+    }
+}
+function installer_copy_tree(string $source,string $destination): void {
+    if(!is_dir($destination)&&!mkdir($destination,0750,true)&&!is_dir($destination))throw new RuntimeException('Could not create the private application directory.');
+    $iterator=new RecursiveIteratorIterator(new RecursiveDirectoryIterator($source,FilesystemIterator::SKIP_DOTS),RecursiveIteratorIterator::SELF_FIRST);
+    foreach($iterator as $item){$relative=substr($item->getPathname(),strlen($source)+1);$target=$destination.'/'.$relative;if($item->isDir()){if(!is_dir($target)&&!mkdir($target,0750,true)&&!is_dir($target))throw new RuntimeException('Could not create private application directories.');}else{if(!copy($item->getPathname(),$target))throw new RuntimeException('Could not copy private application files.');}}
+}
+function installer_db(array $input): PDO {
+    $host=trim((string)($input['db_host']??'localhost'));$port=(int)($input['db_port']??3306);$name=trim((string)($input['db_name']??''));$user=trim((string)($input['db_user']??''));$pass=(string)($input['db_pass']??'');
+    if($name==''||$user=='')throw new RuntimeException('Database name and user are required.');
+    if($port<1||$port>65535)throw new RuntimeException('Database port is invalid.');
+    if(!preg_match('/^[A-Za-z0-9_$-]+$/',$name))throw new RuntimeException('Database name may contain only letters, numbers, underscores, dollar signs and hyphens.');
+    $options=[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,PDO::ATTR_EMULATE_PREPARES=>false];
+    try{$pdo=new PDO('mysql:host='.$host.';port='.$port.';charset=utf8mb4',$user,$pass,$options);$pdo->exec('CREATE DATABASE IF NOT EXISTS `'.str_replace('`','``',$name).'` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');}
+    catch(PDOException $e){throw new RuntimeException('Could not create or access the database. Create the named database in your hosting panel, grant this user access, and run the installer again. Details: '.substr($e->getMessage(),0,240));}
+    try{return new PDO('mysql:host='.$host.';port='.$port.';dbname='.$name.';charset=utf8mb4',$user,$pass,$options);}
+    catch(PDOException $e){throw new RuntimeException('The database was created or found, but the supplied user cannot access it. Grant the user full access to this database and run the installer again. Details: '.substr($e->getMessage(),0,240));}
+}
+function installer_config(array $data,string $privateRoot,string $publicRoot): string {
+    $config=['app'=>['base_url'=>rtrim($data['base_url'],'/'),'timezone'=>$data['timezone'],'session_name'=>'recordstore_session','worker_secret'=>bin2hex(random_bytes(32)),'download_limit_default'=>3,'demo_checkout'=>false,'ffmpeg_path'=>'/usr/bin/ffmpeg','master_upload_max_bytes'=>536870912],'payments'=>['currency'=>'GBP','paypal'=>['sandbox'=>['client_id'=>'REPLACE_WITH_PAYPAL_SANDBOX_CLIENT_ID','client_secret'=>'REPLACE_WITH_PAYPAL_SANDBOX_CLIENT_SECRET','webhook_id'=>'REPLACE_WITH_PAYPAL_SANDBOX_WEBHOOK_ID'],'live'=>['client_id'=>'REPLACE_WITH_PAYPAL_LIVE_CLIENT_ID','client_secret'=>'REPLACE_WITH_PAYPAL_LIVE_CLIENT_SECRET','webhook_id'=>'REPLACE_WITH_PAYPAL_LIVE_WEBHOOK_ID']]],'db'=>['host'=>$data['db_host'],'port'=>(int)$data['db_port'],'name'=>$data['db_name'],'user'=>$data['db_user'],'pass'=>$data['db_pass'],'charset'=>'utf8mb4'],'paths'=>['masters'=>$privateRoot.'/masters','previews'=>$publicRoot.'/previews','artwork'=>$publicRoot.'/artwork']];
+    return "<?php\nreturn ".var_export($config,true).";\n";
+}
+if(is_readable($configPath)){ $success='An existing configuration was found. Installation is disabled for this directory. Use the database SQL shown in the package documentation to mark an existing installation.'; }
+elseif($_SERVER['REQUEST_METHOD']==='POST'){
+    try{
+        if(!hash_equals($_SESSION['installer_token']??'',(string)($_POST['installer_token']??'')))throw new RuntimeException('Invalid installer session.');
+        $data=['app_name'=>trim((string)($_POST['app_name']??$packageName)),'base_url'=>trim((string)($_POST['base_url']??'')),'timezone'=>trim((string)($_POST['timezone']??'Europe/London')),'db_host'=>trim((string)($_POST['db_host']??'localhost')),'db_port'=>(int)($_POST['db_port']??3306),'db_name'=>trim((string)($_POST['db_name']??'')),'db_user'=>trim((string)($_POST['db_user']??'')),'db_pass'=>(string)($_POST['db_pass']??''),'admin_name'=>trim((string)($_POST['admin_name']??'')),'admin_email'=>strtolower(trim((string)($_POST['admin_email']??''))),'admin_password'=>(string)($_POST['admin_password']??''),'scheduler'=>($_POST['scheduler']??'cron'),'private_mode'=>($_POST['private_mode']??$privateModeDefault)];$privateMode=$data['private_mode'];if(!in_array($privateMode,['external','internal'],true))throw new RuntimeException('Choose a valid private storage mode.');if($privateMode==='external'&&!installer_can_write_directory($externalPrivateRoot))throw new RuntimeException('The selected external private directory is not writable. Choose the inside web root option or fix its permissions.');if($privateMode==='internal'&&!installer_can_write_directory($internalPrivateRoot))throw new RuntimeException('The inside web root private directory is not writable.');$privateRoot=$privateMode==='internal'?$internalPrivateRoot:$externalPrivateRoot;if($privateMode==='external'&&!is_file($externalPrivateRoot.'/src/bootstrap.php'))installer_copy_tree($internalPrivateRoot,$externalPrivateRoot);if($privateMode==='internal'&&!is_file($internalPrivateRoot.'/src/bootstrap.php'))installer_copy_tree($externalPrivateRoot,$internalPrivateRoot);$configPath=$privateRoot.'/config.php';
+        if($data['app_name']===''||mb_strlen($data['app_name'])>120)throw new RuntimeException('Choose an application name up to 120 characters.');
+        if(!filter_var($data['base_url'],FILTER_VALIDATE_URL)||str_contains($data['base_url'],'?'))throw new RuntimeException('Enter a valid base URL without a query string.');
+        if(!in_array($data['scheduler'],['cron','hosting panel','webcron','lazy'],true))throw new RuntimeException('Choose a valid scheduler method.');
+        new DateTimeZone($data['timezone']);
+        if(!filter_var($data['admin_email'],FILTER_VALIDATE_EMAIL))throw new RuntimeException('Enter a valid administrator email.');
+        if($data['admin_name']==='')throw new RuntimeException('Enter an administrator name.');
+        if(strlen($data['admin_password'])<12||$data['admin_password']!==($_POST['admin_password_confirm']??''))throw new RuntimeException('Administrator passwords must match and be at least 12 characters.');
+        $pdo=installer_db($data);
+        $stateTable=(int)$pdo->query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='installation_settings'")->fetchColumn();
+        if($stateTable>0 && (int)$pdo->query('SELECT installed FROM installation_settings WHERE id=1 LIMIT 1')->fetchColumn()===1)throw new RuntimeException('This application is already installed. Installation stopped.');
+        $existing=(int)$pdo->query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('users','tracks')")->fetchColumn();
+        if($existing>0)throw new RuntimeException('This database already contains store tables. Installation stopped to protect existing data.');
+        installer_sql($pdo,(string)file_get_contents($privateRoot.'/sql/schema.sql'));
+        $pdo->prepare('INSERT INTO users(email,password_hash,display_name,is_admin,email_verified_at) VALUES(?,?,?,?,NOW())')->execute([$data['admin_email'],password_hash($data['admin_password'],PASSWORD_DEFAULT),$data['admin_name'],1]);
+        $pdo->prepare('INSERT INTO store_settings(setting_key,setting_value) VALUES(?,?) ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value)')->execute(['site_name',$data['app_name']]);
+        if(!is_dir($privateRoot)&&!mkdir($privateRoot,0750,true))throw new RuntimeException('Private directory is not writable.');
+        foreach([$privateRoot.'/masters', $publicRoot.'/previews', $publicRoot.'/artwork', $publicRoot.'/artwork/artists', $publicRoot.'/artwork/releases', $publicRoot.'/artwork/tracks'] as $dir){if(!is_dir($dir)&&!mkdir($dir,0755,true))throw new RuntimeException('Could not create storage directory: '.$dir);}
+        if(!is_dir(dirname($configPath))||!is_writable(dirname($configPath)))throw new RuntimeException('The private configuration directory is not writable.');
+        if(file_put_contents($configPath,installer_config($data,$privateRoot,$publicRoot),LOCK_EX)===false)throw new RuntimeException('Could not write the configuration file.');
+        $installationId=bin2hex(random_bytes(16));$metadata=json_encode(['scheduler'=>$data['scheduler'],'private_mode'=>$privateMode,'private_root'=>$privateRoot,'public_root'=>$publicRoot],JSON_UNESCAPED_SLASHES);
+        $pdo->prepare('INSERT INTO installation_settings(id,installed,installation_id,package_name,package_version,app_name,base_url,timezone,mail_transport,scheduler_method,admin_email,schema_version,metadata_json,completed_at) VALUES(1,1,?,?,?,?,?,?,?,?,?,?,?,NOW())')->execute([$installationId,$packageName,$packageVersion,$data['app_name'],$data['base_url'],$data['timezone'],'local',$data['scheduler'],$data['admin_email'],$packageVersion,$metadata]);
+        $success='Installation completed. Delete or protect install.php, then configure your selected scheduler.';
+    }catch(Throwable $e){$errors[]=$e->getMessage();}
+}
+$internalWritable=installer_can_write_directory($internalPrivateRoot);$defaults=['app_name'=>$_POST['app_name']??$packageName,'base_url'=>$_POST['base_url']??'https://example.com','timezone'=>$_POST['timezone']??'Europe/London','db_host'=>$_POST['db_host']??'localhost','db_port'=>$_POST['db_port']??3306,'db_name'=>$_POST['db_name']??'recordstore','db_user'=>$_POST['db_user']??'','admin_name'=>$_POST['admin_name']??'','admin_email'=>$_POST['admin_email']??''];
+?><!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title><?=installer_e($packageName)?> installer</title><style>body{margin:0;background:#080b12;color:#f7f8fb;font:15px system-ui,sans-serif}.wrap{max-width:850px;margin:40px auto;padding:24px}.panel{background:#121923;border:1px solid #2b3546;border-radius:14px;padding:24px;box-shadow:0 18px 50px #0005}h1{margin-top:0}h2{font-size:18px;margin-top:28px;color:#c39cff}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}label{display:grid;gap:6px;color:#b9c0cc}input,select{padding:12px;border-radius:8px;border:1px solid #354154;background:#0d141e;color:#fff}button{margin-top:22px;width:100%;padding:14px;border:0;border-radius:8px;background:#803fff;color:#fff;font-weight:800}.notice{padding:12px;border-radius:8px;background:#17243b;margin:12px 0}.error{background:#391924;color:#ffb9c3}.success{background:#153b2a;color:#a9f2c6}small{color:#8994a6}@media(max-width:650px){.grid{grid-template-columns:1fr}}</style></head><body><main class="wrap"><section class="panel"><h1><?=installer_e($packageName)?> installer</h1><p>Configure a standard PHP/MySQL digital record shop. Existing configurations are never overwritten.</p><?php foreach($errors as $error):?><div class="notice error"><?=installer_e($error)?></div><?php endforeach;?><?php if($success):?><div class="notice success"><?=installer_e($success)?></div><?php elseif(!is_readable($configPath)):?><form method="post"><input type="hidden" name="installer_token" value="<?=installer_e(installer_token())?>"><h2>Application</h2><div class="grid"><label>Application name<input name="app_name" value="<?=installer_e($defaults['app_name'])?>" required></label><label>Base URL<input type="url" name="base_url" value="<?=installer_e($defaults['base_url'])?>" required></label><label>Timezone<input name="timezone" value="<?=installer_e($defaults['timezone'])?>" required></label><label>Private application storage<select name="private_mode"><option value="external" <?=$privateModeDefault==='external'?'selected':''?> <?=$privateModeDefault==='external'?'':'disabled'?>>Outside web root (recommended)</option><option value="internal" <?=$privateModeDefault==='internal'?'selected':''?> <?=$internalWritable?'':'disabled'?>>Inside web root (protected directory)</option></select><small>Use outside web root when the host allows it. The inside option is for shared hosting and requires server access rules to block the private directory.</small></label><label>Scheduler<select name="scheduler"><option value="cron">Normal cron</option><option value="hosting panel">hosting panel Scheduled Task</option><option value="webcron">External web cron URL</option><option value="lazy">Website traffic fallback</option></select></label></div><h2>Database</h2><div class="grid"><label>Host<input name="db_host" value="<?=installer_e($defaults['db_host'])?>" required></label><label>Port<input type="number" name="db_port" value="<?=installer_e($defaults['db_port'])?>" required></label><label>Database name<input name="db_name" value="<?=installer_e($defaults['db_name'])?>" required></label><label>Database user<input name="db_user" value="<?=installer_e($defaults['db_user'])?>" required></label><label>Database password<input type="password" name="db_pass"></label></div><h2>Administrator</h2><div class="grid"><label>Name<input name="admin_name" value="<?=installer_e($defaults['admin_name'])?>" required></label><label>Email<input type="email" name="admin_email" value="<?=installer_e($defaults['admin_email'])?>" required></label><label>Password<input type="password" name="admin_password" minlength="12" required></label><label>Confirm password<input type="password" name="admin_password_confirm" minlength="12" required></label></div><button>Install application</button></form><?php else:?><div class="notice">The installer is disabled because a configuration already exists.</div><?php endif;?></section></main></body></html>

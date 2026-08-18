@@ -1,0 +1,17 @@
+# Runtime configuration and protected media
+private/config.php
+private/masters/*
+!private/masters/.gitkeep
+public/artwork/artists/*
+!public/artwork/artists/.gitkeep
+public/artwork/releases/*
+!public/artwork/releases/.gitkeep
+public/artwork/tracks/*
+!public/artwork/tracks/.gitkeep
+public/previews/*
+!public/previews/.gitkeep
+
+# Local development
+*.log
+.DS_Store
+Thumbs.db

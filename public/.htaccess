@@ -1,0 +1,38 @@
+Options -Indexes
+DirectoryIndex index.php
+RewriteEngine On
+RewriteRule ^sitemap\.xml$ sitemap.php [END,QSA]
+RewriteRule ^genres/([^/]+)/?$ tracks.php?genre_slug=$1 [END,QSA]
+RewriteRule ^charts/([^/]+)/?$ charts.php?genre_slug=$1 [END,QSA]
+RewriteRule ^genres/?$ genres.php [END,QSA]
+RewriteRule ^charts/?$ charts.php [END,QSA]
+RewriteRule ^tracks/?$ tracks.php [END,QSA]
+RewriteRule ^new-tracks/?$ new-tracks.php [END,QSA]
+RewriteRule ^artists/([^/]+)/?$ artist.php?slug=$1 [END,QSA]
+RewriteRule ^artists/?$ artists.php [END,QSA]
+RewriteRule ^tracks/([^/]+)/?$ track.php?slug=$1 [END,QSA]
+RewriteRule ^account/?$ account.php [END,QSA]
+RewriteRule ^cart/?$ cart.php [END,QSA]
+RewriteRule ^checkout/?$ checkout.php [END,QSA]
+RewriteRule ^paypal-resume/?$ paypal-resume.php [END,QSA]
+RewriteRule ^favourites/?$ favourites.php [END,QSA]
+RewriteRule ^login/?$ login.php [END,QSA]
+RewriteRule ^logout/?$ logout.php [END,QSA]
+RewriteRule ^register/?$ register.php [END,QSA]
+RewriteRule ^newsletter/?$ newsletter.php [END,QSA]
+RewriteRule ^new-releases/?$ new-releases.php [END,QSA]
+RewriteRule ^terms/?$ terms.php [END,QSA]
+RewriteRule ^privacy/?$ privacy.php [END,QSA]
+RewriteRule ^refunds/?$ refunds.php [END,QSA]
+RewriteRule ^cookies/?$ cookies.php [END,QSA]
+RewriteRule ^receipt/([0-9]+)/?$ receipt.php?order=$1 [END,QSA]
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Strict-Transport-Security "max-age=31536000"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+</IfModule>
+<FilesMatch "(^\.|\.ini$|\.log$|\.sql$|\.bak$)">
+  Require all denied
+</FilesMatch>

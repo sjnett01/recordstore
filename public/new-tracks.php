@@ -1,0 +1,4 @@
+<?php
+require __DIR__.'/app-bootstrap.php';
+$tracks=$pdo->query("SELECT t.*,a.name artist_name,g.name genre_name,r.artwork_path release_artwork_path,t.artwork_path track_artwork_path,COALESCE(t.release_date,r.release_date,DATE(t.created_at)) effective_date FROM tracks t JOIN artists a ON a.id=t.artist_id LEFT JOIN releases r ON r.id=t.release_id LEFT JOIN genres g ON g.id=t.genre_id WHERE t.active=1 AND COALESCE(t.release_date,r.release_date,DATE(t.created_at))BETWEEN DATE_SUB(CURDATE(),INTERVAL 30 DAY) AND CURDATE() ORDER BY effective_date DESC,t.id DESC LIMIT 60")->fetchAll();
+layout_header('New Tracks');?><div class="section-title"><div><span class="kicker">FRESH MUSIC</span><h1>New Tracks</h1></div></div><div class="cards"><?php foreach($tracks as $t) echo track_card($t);?></div><?php if(!$tracks):?><div class="panel empty-state"><p>No tracks have been published yet.</p></div><?php endif;?><?php layout_footer();

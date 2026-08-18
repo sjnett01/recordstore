@@ -1,0 +1,1 @@
+<?php require __DIR__.'/app-bootstrap.php'; $logoutUserId=empty($_SESSION['user_id'])?null:(int)$_SESSION['user_id'];audit_event('logout',$logoutUserId);$_SESSION=[]; session_destroy(); redirect('index.php');
