@@ -1,7 +1,13 @@
 <?php
 require __DIR__.'/app-bootstrap.php';
 $u=require_login();
-if(payment_gateway()!=='paypal'){http_response_code(503);exit('The selected payment gateway is not available yet.');}
+if($_SERVER['REQUEST_METHOD']==='POST'){
+    require_csrf();
+    if(isset($_POST['newsletter_opt_in'])){
+        try{request_newsletter_subscription((string)$u['email'],(int)$u['id'],'checkout');}
+        catch(Throwable $newsletterError){error_log('Checkout newsletter subscription failed: '.$newsletterError->getMessage());}
+    }
+}if(payment_gateway()!=='paypal'){http_response_code(503);exit('The selected payment gateway is not available yet.');}
 try{
     $local=create_pending_order_from_cart((int)$u['id']);
     $pc=paypal_config();
@@ -24,4 +30,4 @@ try{
     $approve='';foreach(($pp['links']??[]) as $link){if(($link['rel']??'')==='payer-action'||($link['rel']??'')==='approve'){$approve=(string)$link['href'];break;}}
     if($approve==='')throw new RuntimeException('PayPal did not return an approval URL.');
     header('Location: '.$approve);exit;
-}catch(Throwable $e){error_log('RecordStore checkout error: '.$e->getMessage());layout_header('Payment error');?><section class="panel"><h1>Payment could not start</h1><p><?=e($e->getMessage())?></p><a class="button" href="cart">Return to cart</a></section><?php layout_footer();}
+}catch(Throwable $e){error_log(site_name() . ' checkout error: '.$e->getMessage());layout_header('Payment error');?><section class="panel"><h1>Payment could not start</h1><p><?=e($e->getMessage())?></p><a class="button" href="cart">Return to cart</a></section><?php layout_footer();}

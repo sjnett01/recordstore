@@ -16,16 +16,26 @@
   const back = document.getElementById('playerBack');
   const close = document.getElementById('playerClose');
   const state = document.getElementById('playerState');
+  const chip = root.querySelector('.preview-chip');
   const canvas = document.getElementById('playerSpectrum');
   const spectrumWrap = document.getElementById('playerSpectrumWrap');
   const seekFill = document.getElementById('playerSeekFill');
   const spectrumProgress = document.getElementById('playerSpectrumProgress');
   const ctx = canvas ? canvas.getContext('2d') : null;
 
+  const loadRow = document.createElement('div');
+  loadRow.className = 'player-load-row';
+  loadRow.innerHTML = '<span data-load-label>Downloading preview</span><div class="player-load-track"><span></span></div><strong>0%</strong>';
+  const loadLabel = loadRow.querySelector('[data-load-label]');
+  const loadBar = loadRow.querySelector('.player-load-track span');
+  const loadPercent = loadRow.querySelector('strong');
+  root.querySelector('.player-heading')?.insertAdjacentElement('afterend', loadRow);
+
   const audio = new Audio();
   audio.preload = 'auto';
 
   let activePreviewUrl = '';
+  let activeIsFullTrack = false;
   let activeObjectUrl = '';
   let previewLoadController = null;
   let previewCachePromise = null;
@@ -43,8 +53,21 @@
   let isScrubbing = false;
   let lastCommittedSeek = -1;
   let seekSerial = 0;
+  let analyticsTrackId = 0;
+  let analyticsPlayed = false;
+  let analyticsCompleted = false;
+  let analyticsLastSeek = -1;
 
-  const storageKey = 'recordstore.player.v16';
+  const sendPreviewAnalytics = (eventType, values = {}) => {
+    if (activeIsFullTrack || !analyticsTrackId) return;
+    const payload = JSON.stringify({track_id: analyticsTrackId, event_type: eventType, position_seconds: Math.round((values.position_seconds ?? audio.currentTime ?? 0) * 100) / 100, duration_seconds: Math.round((values.duration_seconds ?? safeDuration()) * 100) / 100, section_seconds: Math.floor((values.section_seconds ?? audio.currentTime ?? 0) / 10) * 10});
+    try {
+      if (navigator.sendBeacon) { navigator.sendBeacon('preview-analytics.php', new Blob([payload], {type: 'application/json'})); return; }
+      fetch('preview-analytics.php', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: payload, keepalive: true}).catch(() => {});
+    } catch (_) {}
+  };
+
+  const storageKey = ${document.body?.dataset.storeKey || 'store'}.player.v16;
   const fmt = seconds => {
     if (!Number.isFinite(seconds)) return '0:00';
     seconds = Math.max(0, Math.floor(seconds));
@@ -62,6 +85,30 @@
     // Generated previews are approximately 90 seconds. This fallback is only used
     // before metadata arrives; the pending seek is repeated once duration is known.
     return 90;
+  };
+
+  const setLoadProgress = percent => {
+    const value = Math.max(0, Math.min(100, Math.round(percent || 0)));
+    if (loadBar) loadBar.style.width = value + '%';
+    if (loadPercent) loadPercent.textContent = value + '%';
+    loadRow.classList.toggle('is-complete', value >= 100);
+  };
+
+  const setLoadMode = (fullTrack, ready) => {
+    if (!loadLabel) return;
+    loadLabel.textContent = ready ? 'Ready to seek' : (fullTrack ? 'Downloading full master' : 'Downloading preview');
+  };
+
+  const updateLoadProgress = () => {
+    if (activeObjectUrl) {
+      setLoadProgress(100);
+      return;
+    }
+    const d = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+    let buffered = 0;
+    if (d && audio.buffered.length) buffered = Math.min(d, audio.buffered.end(audio.buffered.length - 1));
+    const percent = d ? Math.max(0, Math.min(100, Math.round((buffered / d) * 100))) : 0;
+    setLoadProgress(percent);
   };
 
   const canSeekNow = () => audio.readyState >= HTMLMediaElement.HAVE_METADATA && Number.isFinite(audio.duration) && audio.duration > 0;
@@ -101,8 +148,9 @@
       const buttonUrl = new URL(button.dataset.preview || '', window.location.href).href;
       const isActive = activePreviewUrl && buttonUrl === activePreviewUrl;
       const playing = isActive && !audio.paused && !audio.ended;
+      const fullTrack = button.dataset.fullTrack === '1' || button.classList.contains('review-preview-button');
       button.classList.toggle('playing', playing);
-      button.setAttribute('aria-label', playing ? 'Pause preview' : 'Play preview');
+      button.setAttribute('aria-label', playing ? (fullTrack ? 'Pause private master track' : 'Pause preview') : (fullTrack ? 'Play private master track' : 'Play preview'));
       const icon = button.querySelector('[data-play-icon]');
       if (icon) icon.textContent = playing ? '❚❚' : '▶';
       else if (button.classList.contains('preview-fab') || button.classList.contains('round')) button.textContent = playing ? '❚❚' : '▶';
@@ -138,11 +186,37 @@
       cachedPreviewSource = src;
       return activeObjectUrl;
     }).catch(error => {
-      if (error && error.name !== 'AbortError') console.warn('RecordStore background preview cache failed:', error);
+      if (error && error.name !== 'AbortError') console.warn('Application background preview cache failed:', error);
       return '';
     });
 
     return previewCachePromise;
+  };
+
+  const loadFullTrack = async (src, fullTrack) => {
+    setLoadMode(fullTrack, false);
+    if (previewLoadController) previewLoadController.abort();
+    previewLoadController = new AbortController();
+    const response = await fetch(src, {credentials: 'same-origin', cache: 'no-store', signal: previewLoadController.signal});
+    if (!response.ok) throw new Error(`Master request failed (${response.status})`);
+    const total = Number(response.headers.get('Content-Length') || 0);
+    const reader = response.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      chunks.push(part.value);
+      loaded += part.value.byteLength;
+      if (total) setLoadProgress((loaded / total) * 100);
+    }
+    const blob = new Blob(chunks, {type: response.headers.get('Content-Type') || 'audio/mpeg'});
+    if (!blob.size) throw new Error('Master response was empty.');
+    setLoadProgress(100);
+    setLoadMode(fullTrack, true);
+    activeObjectUrl = URL.createObjectURL(blob);
+    cachedPreviewSource = src;
+    return activeObjectUrl;
   };
 
   const ensureCachedPreview = async () => {
@@ -198,7 +272,7 @@
       return true;
     } catch (error) {
       graphFailed = true;
-      console.warn('RecordStore analyser unavailable:', error);
+      console.warn('Application analyser unavailable:', error);
       return false;
     }
   };
@@ -309,6 +383,7 @@
     if (!canSeekNow()) return;
 
     const exactTarget = Math.max(0, Math.min(target, Math.max(0, audio.duration - 0.02)));
+    if (Math.abs(exactTarget - analyticsLastSeek) >= 2) { sendPreviewAnalytics('seek', {position_seconds: exactTarget, section_seconds: exactTarget}); analyticsLastSeek = exactTarget; }
     const serial = ++seekSerial;
     const wasPlaying = !audio.paused && !audio.ended;
     state.textContent = 'PREPARING SEEK';
@@ -320,7 +395,7 @@
       // 90-second preview is cached quietly in the background. The first manual
       // seek waits for that small cache, then all seeking is against the local Blob.
       // This avoids the browser reconnect/reset behaviour we saw with network seeks.
-      const switched = await switchToCachedPreview(exactTarget, wasPlaying);
+      const switched = activeIsFullTrack ? false : await switchToCachedPreview(exactTarget, wasPlaying);
       if (serial !== seekSerial) return;
 
       if (!switched) {
@@ -335,7 +410,7 @@
       persist(true);
     } catch (error) {
       if (serial === seekSerial) state.textContent = audio.paused ? 'PAUSED' : 'BUFFERING';
-      console.warn('RecordStore seek failed:', error);
+      console.warn('Application seek failed:', error);
     }
   };
 
@@ -345,7 +420,10 @@
 
   const loadTrack = async button => {
     await ensureAudioGraph();
-    const src = new URL(button.dataset.preview, window.location.href).href;
+    const fullTrack = button.dataset.fullTrack === '1' || button.classList.contains('review-preview-button');
+    const sourceUrl = new URL(button.dataset.preview, window.location.href);
+    if (fullTrack) sourceUrl.searchParams.delete('preview');
+    const src = sourceUrl.href;
 
     if (activePreviewUrl === src) {
       root.hidden = false;
@@ -354,13 +432,25 @@
       return;
     }
 
+    if (analyticsTrackId && analyticsPlayed && !analyticsCompleted && audio.currentTime > 1) sendPreviewAnalytics('skip');
+
     activePreviewUrl = src;
+    activeIsFullTrack = fullTrack;
+    analyticsTrackId = fullTrack ? 0 : Number(button.dataset.trackId || new URL(button.dataset.preview, window.location.href).searchParams.get('id') || 0);
+    analyticsPlayed = false;
+    analyticsCompleted = false;
+    analyticsLastSeek = -1;
+    setLoadMode(fullTrack, false);
+    if (seek) seek.disabled = true;
+    if (chip) chip.textContent = fullTrack ? 'PRIVATE MASTER' : '90 SEC PREVIEW';
     title.textContent = button.dataset.title || 'Preview';
     artist.textContent = button.dataset.artist || document.body?.dataset.appName || '';
     if (button.dataset.art) art.src = button.dataset.art;
     root.hidden = false;
     root.classList.add('is-visible');
     state.textContent = 'LOADING';
+    loadRow.classList.remove('is-complete');
+    setLoadProgress(0);
     time.textContent = '0:00';
     duration.textContent = '1:30';
     seek.value = '0';
@@ -375,11 +465,12 @@
 
     // Stream immediately so slow connections can start listening as soon as the
     // browser has enough data. Cache the same preview in parallel for local seeks.
-    audio.src = src;
+    audio.src = await loadFullTrack(src, activeIsFullTrack);
     audio.load();
     await waitForMediaEvent('loadedmetadata', 5000);
+    updateLoadProgress();
     await audio.play();
-    startPreviewCache(src);
+    if (seek) seek.disabled = false;
     persist(true);
   };
 
@@ -403,7 +494,11 @@
     state.textContent = 'PLAYING';
     root.classList.add('is-playing');
     syncPreviewButtons();
+    if (!activeIsFullTrack && !analyticsPlayed) { analyticsPlayed = true; sendPreviewAnalytics('play'); }
     persist(true);
+  });
+  ['progress', 'loadedmetadata', 'canplay', 'canplaythrough', 'timeupdate', 'durationchange'].forEach(eventName => {
+    audio.addEventListener(eventName, updateLoadProgress);
   });
   audio.addEventListener('pause', () => {
     toggle.textContent = '▶';
@@ -425,6 +520,7 @@
     state.textContent = 'FINISHED';
     root.classList.remove('is-playing');
     syncPreviewButtons();
+    if (!activeIsFullTrack && analyticsPlayed && !analyticsCompleted) { analyticsCompleted = true; sendPreviewAnalytics('complete', {position_seconds: audio.duration, duration_seconds: audio.duration}); }
     setSeekVisual(100);
     persist(true);
   });
@@ -517,11 +613,11 @@
       startPreviewCache(activePreviewUrl);
       persist(true);
     } catch (error) {
-      console.warn('RecordStore preview refresh failed:', error);
+      console.warn('Application preview refresh failed:', error);
     }
   };
 
-  document.addEventListener('recordstore:navigated', () => {
+  document.addEventListener('app:navigated', () => {
     syncPreviewButtons();
     refreshUpdatedPreview();
   });

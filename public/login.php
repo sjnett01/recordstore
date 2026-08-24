@@ -63,6 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             session_regenerate_id(true);
             $_SESSION['user_id'] = (int)$account['id'];
+            record_user_session((int)$account['id']);
             save_pending_favourite((int)$account['id']);
             $pdo->prepare('UPDATE users SET last_login_at=NOW() WHERE id=?')->execute([(int)$account['id']]);audit_event('login_success',(int)$account['id'],['method'=>'otp']);
             unset($_SESSION['otp_login_email']);
@@ -99,6 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             session_regenerate_id(true);
             $_SESSION['user_id'] = (int)$admin['id'];
+            record_user_session((int)$admin['id']);
             save_pending_favourite((int)$admin['id']);
             $pdo->prepare('UPDATE users SET last_login_at=NOW() WHERE id=?')->execute([(int)$admin['id']]);audit_event('login_success',(int)$admin['id'],['method'=>'password']);
             unset($_SESSION['otp_login_email']);
@@ -161,6 +163,6 @@ layout_header('Login'); ?>
     </div>
   <?php endif; ?>
 
-  <p>New to RecordStore? <a href="register">Create account</a></p>
+  <p>New to <?=e(site_name())?>? <a href="register">Create account</a></p>
 </form>
 <?php layout_footer();

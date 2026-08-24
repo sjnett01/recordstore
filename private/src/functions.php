@@ -2,23 +2,24 @@
 declare(strict_types=1);
 
 function e(mixed $value): string { return htmlspecialchars((string)($value ?? ''), ENT_QUOTES, 'UTF-8'); }
-function url(string $path=''): string { global $config; $path=ltrim($path,'/'); $aliases=['account.php'=>'account','cart.php'=>'cart','checkout.php'=>'checkout','paypal-resume.php'=>'paypal-resume','favourites.php'=>'favourites','login.php'=>'login','logout.php'=>'logout','register.php'=>'register','newsletter.php'=>'newsletter','new-releases.php'=>'new-releases','terms.php'=>'terms','privacy.php'=>'privacy','refunds.php'=>'refunds','cookies.php'=>'cookies']; foreach($aliases as $from=>$to){if($path===$from||str_starts_with($path,$from.'?')){$path=$to.substr($path,strlen($from));break;}} if(str_starts_with($path,'receipt.php?order=')){$path='receipt/'.rawurlencode(substr($path,strlen('receipt.php?order=')));} return rtrim($config['app']['base_url'],'/').'/'.$path; }
-function recordstore_build_version(): string { return '1.13.3'; }
+function url(string $path=''): string { global $config; $path=ltrim($path,'/'); $aliases=['account.php'=>'account','cart.php'=>'cart','checkout.php'=>'checkout','paypal-resume.php'=>'paypal-resume','favourites.php'=>'favourites','login.php'=>'login','logout.php'=>'logout','register.php'=>'register','newsletter.php'=>'newsletter','new-releases.php'=>'new-releases','artist-submit.php'=>'artist-submit','artist-management.php'=>'artist-management','terms.php'=>'terms','privacy.php'=>'privacy','refunds.php'=>'refunds','cookies.php'=>'cookies']; foreach($aliases as $from=>$to){if($path===$from||str_starts_with($path,$from.'?')){$path=$to.substr($path,strlen($from));break;}} if(str_starts_with($path,'receipt.php?order=')){$path='receipt/'.rawurlencode(substr($path,strlen('receipt.php?order=')));} return rtrim($config['app']['base_url'],'/').'/'.$path; }
+function recordstore_build_version(): string { return '1.13.5'; }
 function recordstore_preview_format(): string { return 'M4A / AAC (faststart)'; }
 function redirect(string $path): never { header('Location: '.url($path)); exit; }
 function csrf_token(): string { if(empty($_SESSION['csrf'])) $_SESSION['csrf']=bin2hex(random_bytes(32)); return $_SESSION['csrf']; }
 function require_csrf(): void { if(!hash_equals($_SESSION['csrf']??'', $_POST['csrf']??'')){ http_response_code(419); exit('Invalid CSRF token'); } }
 function audit_event(string $eventType, ?int $userId=null, array $metadata=[]): void { global $pdo; try { $ip=$_SERVER['REMOTE_ADDR']??null;$ua=substr((string)($_SERVER['HTTP_USER_AGENT']??''),0,512);$json=$metadata?json_encode($metadata,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE):null;$st=$pdo->prepare('INSERT INTO audit_log(user_id,event_type,ip_address,user_agent,metadata_json) VALUES(?,?,INET6_ATON(?),?,?)');$st->execute([$userId,$eventType,$ip,$ua,$json]); } catch(Throwable $ignored) {} }
-function login_rate_limited(): bool { global $pdo; $ip=(string)($_SERVER['REMOTE_ADDR']??''); if($ip==='')return false; try{$st=$pdo->prepare("SELECT COUNT(*) FROM audit_log WHERE event_type='login_failed' AND ip_address=INET6_ATON(?) AND created_at>=DATE_SUB(NOW(),INTERVAL 15 MINUTE)");$st->execute([$ip]);return (int)$st->fetchColumn()>=10;}catch(Throwable $ignored){return false;} }function user(): ?array { global $pdo; if(empty($_SESSION['user_id'])) return null; $st=$pdo->prepare('SELECT id,email,display_name,is_admin,email_verified_at,disabled_at,banned_at,ban_reason FROM users WHERE id=?'); $st->execute([$_SESSION['user_id']]); $row=$st->fetch()?:null; if($row&&($row['disabled_at']||$row['banned_at']||empty($row['email_verified_at']))){if($row&&empty($row['email_verified_at'])){$reason='email_unverified';}else{$reason=$row['banned_at']?'banned':'disabled';}if(empty($_SESSION['blocked_session_audited'])){audit_event('session_blocked',(int)$row['id'],['reason'=>$reason]);$_SESSION['blocked_session_audited']=1;}unset($_SESSION['user_id']);return null;}return $row; }
-function require_login(): array { $u=user(); if(!$u) redirect('login?next='.urlencode($_SERVER['REQUEST_URI']??'/account')); return $u; }
-function require_admin(): array { $u=require_login(); if(empty($u['is_admin'])){http_response_code(403);exit('Admin only');} return $u; }
+function login_rate_limited(): bool { global $pdo; $ip=(string)($_SERVER['REMOTE_ADDR']??''); if($ip==='')return false; try{$st=$pdo->prepare("SELECT COUNT(*) FROM audit_log WHERE event_type='login_failed' AND ip_address=INET6_ATON(?) AND created_at>=DATE_SUB(NOW(),INTERVAL 15 MINUTE)");$st->execute([$ip]);return (int)$st->fetchColumn()>=10;}catch(Throwable $ignored){return false;} }function user(): ?array { global $pdo; if(empty($_SESSION['user_id'])) return null; $st=$pdo->prepare('SELECT id,email,display_name,is_admin,is_artist,paypal_email,email_verified_at,disabled_at,banned_at,ban_reason FROM users WHERE id=?'); $st->execute([$_SESSION['user_id']]); $row=$st->fetch()?:null; if($row&&($row['disabled_at']||$row['banned_at']||empty($row['email_verified_at']))){if($row&&empty($row['email_verified_at'])){$reason='email_unverified';}else{$reason=$row['banned_at']?'banned':'disabled';}if(empty($_SESSION['blocked_session_audited'])){audit_event('session_blocked',(int)$row['id'],['reason'=>$reason]);$_SESSION['blocked_session_audited']=1;}unset($_SESSION['user_id']);return null;}return $row; }
+function require_login(): array { global $pdo; $u=user(); if(!$u) redirect('login?next='.urlencode($_SERVER['REQUEST_URI']??'/account')); try{$st=$pdo->prepare('SELECT revoked_at,expires_at FROM user_sessions WHERE session_hash=? AND user_id=? LIMIT 1');$st->execute([security_session_hash(),(int)$u['id']]);$session=$st->fetch();if($session&&($session['revoked_at']||($session['expires_at']&&strtotime($session['expires_at'])<time()))){revoke_user_session();$_SESSION=[];redirect('login');}}catch(Throwable $ignored){} return $u; }
+function require_admin(): array { global $pdo; $u=require_login(); if(empty($u['is_admin'])){http_response_code(403);exit('Admin only');} try{$st=$pdo->prepare('SELECT admin_2fa_enabled FROM users WHERE id=?');$st->execute([(int)$u['id']]);if((int)$st->fetchColumn()===1&&empty($_SESSION['admin_2fa_verified'])){$_SESSION['admin_2fa_return']=(string)($_SERVER['REQUEST_URI']??'admin.php');redirect('admin-2fa.php');}}catch(Throwable $ignored){} return $u; }
+function require_artist(): array { $u=require_login(); if(empty($u['is_artist'])&&!empty($u['is_admin']))return $u; if(empty($u['is_artist'])){http_response_code(403);exit('Artist submissions are not enabled for this account.');} return $u; }
 function money(int $pence): string { return '£'.number_format($pence/100,2); }
 function business_details(): array { return ['name'=>(string)store_setting('business_name',site_name()),'address'=>(string)store_setting('business_address',''),'city'=>(string)store_setting('business_city',''),'postcode'=>(string)store_setting('business_postcode',''),'country'=>(string)store_setting('business_country',''),'vat_number'=>(string)store_setting('business_vat_number','')]; }
 function receipt_pdf_text(string $value): string { return str_replace(['\\','(',')'],['\\\\','\\(','\\)'],preg_replace('/[^\\x20-\\x7E\\n]/','?',(string)$value)??''); }
 function build_receipt_pdf(array $order,array $items,array $customer,array $business): string {
     $lines=[];$lines[]=$business['name'];foreach([$business['address'],$business['city'],$business['postcode'],$business['country']] as $part){if(trim($part)!=='')$lines[]=$part;}if($business['vat_number']!=='')$lines[]='VAT number: '.$business['vat_number'];$lines[]='';$lines[]='PAYMENT RECEIPT';$lines[]='Order #'.$order['id'].'  '.date('j M Y, H:i',strtotime((string)($order['paid_at']?:$order['created_at'])));$lines[]='Customer: '.$customer['display_name'].' <'.$customer['email'].'>';$lines[]='';foreach($items as $item)$lines[]=$item['title'].' - '.$item['artist_name'].(!empty($item['mix_name'])?' / '.$item['mix_name']:'').'  '.money((int)$item['unit_price_pence']);$lines[]='';$lines[]='Subtotal: '.money((int)$order['subtotal_pence']);if((int)$order['discount_pence']>0)$lines[]='Discount: -'.money((int)$order['discount_pence']);if((float)($order['vat_rate']??0)>0)$lines[]='VAT ('.number_format((float)$order['vat_rate'],2).'%) '.money((int)$order['vat_pence']);$lines[]='Total paid: '.money((int)$order['total_pence']);$lines[]='';$lines[]='Digital goods receipt - no physical delivery.';$content="BT\n/F1 11 Tf\n50 790 Td\n";foreach($lines as $i=>$line){if($i>0)$content.="0 -16 Td\n";$content.='('.receipt_pdf_text($line).") Tj\n";}$content.="ET\n";$objects=[];$objects[]='<< /Type /Catalog /Pages 2 0 R >>';$objects[]='<< /Type /Pages /Kids [3 0 R] /Count 1 >>';$objects[]='<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>';$objects[]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';$objects[]='<< /Length '.strlen($content).' >>\nstream\n'.$content.'endstream';$pdf="%PDF-1.4\n";$offsets=[0];foreach($objects as $i=>$object){$offsets[] = strlen($pdf);$pdf.=($i+1).' 0 obj\n'.$object."\nendobj\n";}$xref=strlen($pdf);$pdf.="xref\n0 ".(count($objects)+1)."\n0000000000 65535 f \n";for($i=1;$i<=count($objects);$i++)$pdf.=sprintf('%010d 00000 n \n',$offsets[$i]);$pdf.="trailer\n<< /Size ".(count($objects)+1)." /Root 1 0 R >>\nstartxref\n".$xref."\n%%EOF";return $pdf;
 }
-function purge_unverified_accounts(): int { global $pdo; $st=$pdo->prepare("SELECT id FROM users WHERE email_verified_at IS NULL AND is_admin=0 AND created_at < DATE_SUB(NOW(),INTERVAL 7 DAY) AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id=users.id)");$st->execute();$ids=array_map('intval',$st->fetchAll(PDO::FETCH_COLUMN));if(!$ids)return 0;$delete=$pdo->prepare('DELETE FROM users WHERE id=? AND email_verified_at IS NULL AND is_admin=0');$count=0;foreach($ids as $id){$delete->execute([$id]);$count+=(int)$delete->rowCount();}return $count; }
+function purge_unverified_accounts(): int { global $pdo; $st=$pdo->prepare("DELETE FROM users WHERE email_verified_at IS NULL AND is_admin=0 AND created_at < DATE_SUB(NOW(),INTERVAL 7 DAY) AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id=users.id)");$st->execute();return $st->rowCount(); }
 function cart(): array { return $_SESSION['cart']??[]; }
 function cart_count(): int { return count(cart()); }function discount_code_normalize(string $code): string { return strtoupper(trim($code)); }
 function discount_quote(string $code,int $subtotalPence,?int $userId=null): array {
@@ -70,6 +71,11 @@ function is_track_favourite(int $trackId): bool { return isset(favourite_track_i
 function current_path(): string { return basename(parse_url($_SERVER['REQUEST_URI']??'/',PHP_URL_PATH)?:'index.php'); }
 function slugify(string $s): string { $s=strtolower(trim($s)); $s=preg_replace('/[^a-z0-9]+/','-',$s)??''; return trim($s,'-')?:'item'; }function unique_artist_slug(PDO $pdo, string $name, ?int $excludeId=null): string { $base=slugify($name); $candidate=$base; $suffix=2; while(true){$sql='SELECT id FROM artists WHERE slug=?'.($excludeId?' AND id<>?':'').' LIMIT 1';$st=$pdo->prepare($sql);$excludeId?$st->execute([$candidate,$excludeId]):$st->execute([$candidate]);if(!$st->fetch())return $candidate;$candidate=$base.'-'.$suffix++;} }
 function artist_public_slug(array $artist): string { $slug=slugify((string)($artist['slug']??$artist['artist_slug']??$artist['name']??'artist'));return preg_replace('/-[0-9a-f]{4}$/','',$slug)?:$slug; }
+function parse_artist_credit_names(string $credit): array { $credit=trim(preg_replace('/\s+/',' ',$credit)??$credit);if($credit==='')return []; $parts=preg_split('/\s+(?:x|×|&|vs\.?|feat\.?|ft\.?|featuring)\s+/iu',$credit,-1,PREG_SPLIT_NO_EMPTY)?:[$credit];$out=[];foreach($parts as $part){$part=trim($part," \t\n\r\0\x0B,;-");if($part!==''&&!in_array(mb_strtolower($part),array_map('mb_strtolower',$out),true))$out[]=$part;}return $out; }
+function artist_credit_name_matches(string $artistName,array $creditNames): bool { $needle=mb_strtolower(trim(preg_replace('/\s+/',' ',$artistName)??$artistName));foreach($creditNames as $name){if($needle===mb_strtolower(trim((string)$name)))return true;}return false; }
+function track_artist_credit(array $track): string { static $cache=[]; $id=(int)($track['id']??$track['track_id']??0);$fallback=trim((string)($track['artist_name']??''));if($id<=0)return $fallback;if(isset($cache[$id]))return $cache[$id];try{$st=$GLOBALS['pdo']->prepare("SELECT a.name FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=? ORDER BY ta.sort_order,ta.artist_id");$st->execute([$id]);$names=$st->fetchAll(PDO::FETCH_COLUMN);$cache[$id]=$names?implode(' x ',array_map('strval',$names)):$fallback;}catch(Throwable $ignored){$cache[$id]=$fallback;}return $cache[$id]; }
+function artist_credit_from_ids(array $ids): string { $ids=array_values(array_unique(array_filter(array_map('intval',$ids))));if(!$ids)return '';try{$ph=implode(',',array_fill(0,count($ids),'?'));$st=$GLOBALS['pdo']->prepare("SELECT id,name FROM artists WHERE id IN ($ph)");$st->execute($ids);$byId=[];foreach($st->fetchAll() as $row)$byId[(int)$row['id']]=(string)$row['name'];$names=[];foreach($ids as $id)if(isset($byId[$id]))$names[]=$byId[$id];return implode(' x ',$names);}catch(Throwable $ignored){return '';}}
+function track_artist_ids(int $trackId): array { if($trackId<=0)return []; try{$st=$GLOBALS['pdo']->prepare('SELECT artist_id FROM track_artists WHERE track_id=? ORDER BY sort_order,artist_id');$st->execute([$trackId]);$ids=array_map('intval',$st->fetchAll(PDO::FETCH_COLUMN));if($ids)return $ids;$st=$GLOBALS['pdo']->prepare('SELECT artist_id FROM tracks WHERE id=?');$st->execute([$trackId]);$primary=(int)($st->fetchColumn()?:0);return $primary?[$primary]:[];}catch(Throwable $ignored){return [];} }
 
 function artwork_url(?string $path): string {
     if(!$path){$fallback=site_theme()['default_artwork']??'';return $fallback!==''?(filter_var($fallback,FILTER_VALIDATE_URL)?$fallback:url(ltrim($fallback,'/'))):url('assets/images/empty-art.svg');}
@@ -92,6 +98,45 @@ function store_uploaded_image(array $file, string $subdir, string $prefix='image
     return $subdir.'/'.$name;
 }
 
+function standardized_track_filename(string $artist, string $title, ?string $mixName, string $extension='mp3'): string {
+    $artist=trim(preg_replace('/\s+/',' ',$artist)??'Artist');
+    $title=trim(preg_replace('/\s+/',' ',$title)??'Track');
+    $mix=trim(preg_replace('/\s+/',' ',$mixName??'')??'');
+    $name=$artist.' - '.$title.($mix!==''?' ('.$mix.')':'');
+    $name=preg_replace('/[<>:"\/\\|?*\x00-\x1F]+/','',$name)??$name;
+    $name=trim(preg_replace('/\s+/',' ',$name)??$name,'. ');
+    return ($name!==''?$name:'Track').'.'.strtolower(ltrim($extension,'.'));
+}
+
+function audio_metadata_tags(string $path): array {
+    global $config;
+    $ffprobe=(string)($config['app']['ffprobe_path']??'');
+    if(!function_exists('exec'))return [];
+    if($ffprobe!==''&&is_file($ffprobe)&&is_executable($ffprobe)){$cmd=escapeshellarg($ffprobe).' -v quiet -print_format json -show_entries format_tags='.escapeshellarg('artist,title,genre,TBPM').' '.escapeshellarg($path);$output=[];$exit=0;exec($cmd,$output,$exit);if($exit===0){$json=json_decode(implode("\n",$output),true);$tags=$json['format']['tags']??[];$normal=[];foreach($tags as $key=>$value)$normal[strtolower((string)$key)]=(string)$value;if($normal)return $normal;}}
+    $ffmpeg=(string)($config['app']['ffmpeg_path']??'');if($ffmpeg===''||!is_file($ffmpeg)||!is_executable($ffmpeg))return [];
+    $output=[];$exit=0;exec(escapeshellarg($ffmpeg).' -hide_banner -i '.escapeshellarg($path).' -f ffmetadata - 2>&1',$output,$exit);$normal=[];foreach($output as $line){if(preg_match('/^([A-Za-z0-9_]+)=(.*)$/',$line,$m))$normal[strtolower($m[1])]=trim($m[2]);}return $normal;
+}
+
+function apply_audio_metadata(string $path,string $artist,string $title,?string $genre,?int $bpm,?string $mixName=null): void {
+    global $config;
+    if(strtolower(pathinfo($path,PATHINFO_EXTENSION))!=='mp3')return;
+    $ffmpeg=(string)($config['app']['ffmpeg_path']??'');if($ffmpeg===''||!is_file($ffmpeg)||!is_executable($ffmpeg)||!function_exists('exec'))throw new RuntimeException('MP3 metadata could not be updated because ffmpeg is unavailable.');
+    $temp=$path.'.tagging-'.bin2hex(random_bytes(8)).'.mp3';
+    $args=[$ffmpeg,'-hide_banner','-loglevel','error','-y','-i',$path,'-map_metadata','-1','-codec:a','copy','-id3v2_version','3','-metadata','artist='.$artist,'-metadata','album_artist='.$artist,'-metadata','title='.$title,'-metadata','genre='.($genre??''),'-metadata','TBPM='.($bpm?(string)$bpm:''),'-metadata','comment='.($mixName??''),$temp];
+    $cmd='';foreach($args as $arg)$cmd.=' '.escapeshellarg((string)$arg);$output=[];$exit=0;exec(trim($cmd),$output,$exit);if($exit!==0||!is_file($temp)){@unlink($temp);throw new RuntimeException('The MP3 metadata could not be updated.');}
+    if(!@rename($temp,$path)){@unlink($temp);throw new RuntimeException('The tagged MP3 could not replace the stored master.');}
+    $tags=audio_metadata_tags($path);if($tags){$matches=strcasecmp(trim((string)($tags['artist']??'')),trim($artist))===0&&strcasecmp(trim((string)($tags['title']??'')),trim($title))===0;if($genre!==null&&$genre!=='' )$matches=$matches&&strcasecmp(trim((string)($tags['genre']??'')),trim($genre))===0;if($bpm)$matches=$matches&&preg_match('/^'.preg_quote((string)$bpm,'/').'$/',(string)($tags['tbpm']??''));if(!$matches)throw new RuntimeException('The stored MP3 metadata could not be verified.');}
+}
+
+function standardize_stored_audio(array $stored,string $artist,string $title,?string $genre,?int $bpm,?string $mixName=null): array {
+    $trackId=(int)($_POST['id']??0);if($trackId>0){try{$st=$GLOBALS['pdo']->prepare('SELECT a.name FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=? ORDER BY ta.sort_order,ta.artist_id');$st->execute([$trackId]);$names=$st->fetchAll(PDO::FETCH_COLUMN);if($names)$artist=implode(' x ',array_map('strval',$names));}catch(Throwable $ignored){}}
+    if(!empty($_POST['artist_ids'])&&is_array($_POST['artist_ids'])){try{$ids=array_values(array_unique(array_filter(array_map('intval',$_POST['artist_ids']))));if($ids){$ph=implode(',',array_fill(0,count($ids),'?'));$st=$GLOBALS['pdo']->prepare("SELECT id,name FROM artists WHERE id IN ($ph)");$st->execute($ids);$byId=[];foreach($st->fetchAll() as $row)$byId[(int)$row['id']]=(string)$row['name'];$ordered=[];foreach($ids as $id)if(isset($byId[$id]))$ordered[]=$byId[$id];if($ordered)$artist=implode(' x ',$ordered);}}catch(Throwable $ignored){}}
+    apply_audio_metadata((string)$stored['master_full_path'],$artist,$title,$genre,$bpm,$mixName);
+    $extension=pathinfo((string)($stored['master_path']??$stored['file_name']??''),PATHINFO_EXTENSION)?:'mp3';
+    $stored['file_name']=standardized_track_filename($artist,$title,$mixName,$extension);
+    return $stored;
+}
+
 function site_theme(): array {
     global $config;
     return ['bg'=>store_setting('theme_bg','#07090e')?:'#07090e','panel'=>store_setting('theme_panel','#10141b')?:'#10141b','text'=>store_setting('theme_text','#f7f8fb')?:'#f7f8fb','muted'=>store_setting('theme_muted','#8f98a8')?:'#8f98a8','accent'=>store_setting('theme_accent','#7b3cff')?:'#7b3cff','accent2'=>store_setting('theme_accent2','#a35bff')?:'#a35bff','font'=>store_setting('theme_font','Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif')?:'Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif','heading_font'=>store_setting('theme_heading_font','Inter')?:'Inter','ui_font'=>store_setting('theme_ui_font','Inter,ui-sans-serif,system-ui,sans-serif')?:'Inter,ui-sans-serif,system-ui,sans-serif','mono_font'=>store_setting('theme_mono_font','ui-monospace,SFMono-Regular,Consolas,monospace')?:'ui-monospace,SFMono-Regular,Consolas,monospace','display_font'=>store_setting('theme_display_font',store_setting('theme_heading_font','Inter')?:'Inter')?:'Inter','section_font'=>store_setting('theme_section_font',store_setting('theme_heading_font','Inter')?:'Inter')?:'Inter','card_font'=>store_setting('theme_card_font',store_setting('theme_heading_font','Inter')?:'Inter')?:'Inter','meta_font'=>store_setting('theme_meta_font',store_setting('theme_font','Inter,ui-sans-serif,system-ui,sans-serif')?:'Inter,ui-sans-serif,system-ui,sans-serif')?:'Inter,ui-sans-serif,system-ui,sans-serif','label_font'=>store_setting('theme_label_font',store_setting('theme_ui_font','Inter,ui-sans-serif,system-ui,sans-serif')?:'Inter,ui-sans-serif,system-ui,sans-serif')?:'Inter,ui-sans-serif,system-ui,sans-serif','button_font'=>store_setting('theme_button_font',store_setting('theme_ui_font','Inter,ui-sans-serif,system-ui,sans-serif')?:'Inter,ui-sans-serif,system-ui,sans-serif')?:'Inter,ui-sans-serif,system-ui,sans-serif','default_artwork'=>store_setting('theme_default_artwork','')?:''];
@@ -101,22 +146,40 @@ function site_name(): string {
     $fallback=trim((string)($config['app']['name']??'RecordStore')) ?: 'RecordStore';
     return trim((string)store_setting('site_name',$fallback)) ?: $fallback;
 }
-function mail_theme_css(): string { $t=site_theme(); return ':root{--mail-bg:'.htmlspecialchars($t['bg'],ENT_QUOTES,'UTF-8').';--mail-panel:'.htmlspecialchars($t['panel'],ENT_QUOTES,'UTF-8').';--mail-text:'.htmlspecialchars($t['text'],ENT_QUOTES,'UTF-8').';--mail-muted:'.htmlspecialchars($t['muted'],ENT_QUOTES,'UTF-8').';--mail-accent:'.htmlspecialchars($t['accent'],ENT_QUOTES,'UTF-8').';--mail-accent2:'.htmlspecialchars($t['accent2'],ENT_QUOTES,'UTF-8').';--mail-font:'.htmlspecialchars($t['font'],ENT_QUOTES,'UTF-8').';}'; }
+function store_identifier(string $value, string $fallback='store'): string {
+    $value=strtolower((string)preg_replace('/[^a-z0-9]+/i','-',trim($value)));
+    $value=trim($value,'-');
+    return substr($value!==''?$value:$fallback,0,40);
+}
+function store_dom_id(string $suffix): string { return store_identifier(site_name()).'-'.trim($suffix,'-'); }function mail_theme_css(): string { $t=site_theme(); return ':root{--mail-bg:'.htmlspecialchars($t['bg'],ENT_QUOTES,'UTF-8').';--mail-panel:'.htmlspecialchars($t['panel'],ENT_QUOTES,'UTF-8').';--mail-text:'.htmlspecialchars($t['text'],ENT_QUOTES,'UTF-8').';--mail-muted:'.htmlspecialchars($t['muted'],ENT_QUOTES,'UTF-8').';--mail-accent:'.htmlspecialchars($t['accent'],ENT_QUOTES,'UTF-8').';--mail-accent2:'.htmlspecialchars($t['accent2'],ENT_QUOTES,'UTF-8').';--mail-font:'.htmlspecialchars($t['font'],ENT_QUOTES,'UTF-8').';}'; }
+function request_newsletter_subscription(string $email, ?int $userId=null, string $source='site'): string {
+    global $pdo;
+    $email=strtolower(trim($email));
+    if(!filter_var($email,FILTER_VALIDATE_EMAIL))throw new RuntimeException('Enter a valid email address.');
+    $token=bin2hex(random_bytes(32));$hash=hash('sha256',$token);
+    $st=$pdo->prepare('SELECT id,confirmed_at,unsubscribed_at FROM newsletter_subscribers WHERE email=? LIMIT 1');$st->execute([$email]);$existing=$st->fetch();
+    if($existing&&$existing['confirmed_at']&&!$existing['unsubscribed_at'])return 'You are already subscribed to release updates.';
+    if($existing)$pdo->prepare('UPDATE newsletter_subscribers SET user_id=?,confirmation_hash=?,confirmed_at=NULL,unsubscribed_at=NULL,source=? WHERE id=?')->execute([$userId,$hash,$source,(int)$existing['id']]);
+    else $pdo->prepare('INSERT INTO newsletter_subscribers(user_id,email,confirmation_hash,source) VALUES(?,?,?,?)')->execute([$userId,$email,$hash,$source]);
+    try{send_store_mail($email,'Confirm '.site_name().' release updates','Please confirm your subscription by visiting: '.url('newsletter.php?confirm='.$token)."\n\nIf you did not request this, you can ignore this email.");}catch(Throwable $mailError){error_log('Newsletter confirmation email failed: '.$mailError->getMessage());}
+    return 'Check your inbox to confirm your release updates subscription.';
+}
 function layout_header(string $title=''): void {
     global $config,$pdo;
-    $u=user(); $cartCount=cart_count(); $page=current_path(); $name=site_name(); $metaContext=$GLOBALS['page_meta']??[]; $metaTitle=$title ? $title.' | '. $name : $name; $requestPath=(string)(parse_url($_SERVER['REQUEST_URI']??'/',PHP_URL_PATH)??'/'); $canonicalUrl=url(ltrim($requestPath,'/')); $metaDescription=(string)($metaContext['description']??($title ? $title.' on '. $name : $name.' digital music store')); $metaImage=(string)($metaContext['image']??url('assets/images/brand-orb.svg')); $metaImageAlt=(string)($metaContext['image_alt']??$metaTitle); $metaImageType=(string)($metaContext['image_type']??'image/svg+xml'); $metaType=(string)($metaContext['type']??'website'); $metaStructured=$metaContext['structured']??null;
+    $u=user(); $cartCount=cart_count(); $page=current_path(); $name=site_name(); $shellState=$u ? 'user-'.(int)$u['id'].'-'.(!empty($u['is_admin'])?'admin':'customer').'-'.(!empty($u['is_artist'])?'artist':'shopper') : 'guest'; $metaContext=$GLOBALS['page_meta']??[]; $metaTitle=$title ? $title.' | '. $name : $name; $requestPath=(string)(parse_url($_SERVER['REQUEST_URI']??'/',PHP_URL_PATH)??'/'); $canonicalUrl=url(ltrim($requestPath,'/')); $metaDescription=(string)($metaContext['description']??($title ? $title.' on '. $name : $name.' digital music store')); $metaImage=(string)($metaContext['image']??url('assets/images/brand-orb.svg')); $metaImageAlt=(string)($metaContext['image_alt']??$metaTitle); $metaImageType=(string)($metaContext['image_type']??'image/svg+xml'); $metaType=(string)($metaContext['type']??'website'); $metaStructured=$metaContext['structured']??null;
     ?><!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="theme-color" content="<?=e(site_theme()['bg'])?>"><style>:root{--bg:<?=e(site_theme()['bg'])?>;--panel:<?=e(site_theme()['panel'])?>;--text:<?=e(site_theme()['text'])?>;--muted:<?=e(site_theme()['muted'])?>;--purple:<?=e(site_theme()['accent'])?>;--purple2:<?=e(site_theme()['accent2'])?>;font-family:<?=e(site_theme()['font'])?>;--heading-font:<?=e(site_theme()['heading_font'])?>;--ui-font:<?=e(site_theme()['ui_font'])?>;--mono-font:<?=e(site_theme()['mono_font'])?>;--display-font:<?=e(site_theme()['display_font'])?>;--section-font:<?=e(site_theme()['section_font'])?>;--card-font:<?=e(site_theme()['card_font'])?>;--meta-font:<?=e(site_theme()['meta_font'])?>;--label-font:<?=e(site_theme()['label_font'])?>;--button-font:<?=e(site_theme()['button_font'])?>}.hero h1{font-family:var(--display-font)}.section-title h1,.section-title h2{font-family:var(--section-font)}.release-info h3,.track-row h3{font-family:var(--card-font)}.hero p,.release-info p,.track-row small,.player-meta span{font-family:var(--meta-font)}.kicker,.eyebrow,.nav{font-family:var(--label-font)}.button,button{font-family:var(--button-font)}input,textarea,select{font-family:var(--ui-font)}h1,h2,h3{font-family:var(--heading-font)}code{font-family:var(--mono-font)}</style><meta name="description" content="<?=e($metaDescription)?>"><link rel="canonical" href="<?=e($canonicalUrl)?>"><meta property="og:site_name" content="<?=e($name)?>"><meta property="og:locale" content="en_GB"><meta property="og:title" content="<?=e($metaTitle)?>"><meta property="og:description" content="<?=e($metaDescription)?>"><meta property="og:url" content="<?=e($canonicalUrl)?>"><meta property="og:type" content="<?=e($metaType)?>"><meta property="og:image" content="<?=e($metaImage)?>"><meta property="og:image:alt" content="<?=e($metaImageAlt)?>"><meta property="og:image:type" content="<?=e($metaImageType)?>"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="<?=e($metaTitle)?>"><meta name="twitter:description" content="<?=e($metaDescription)?>"><meta name="twitter:image" content="<?=e($metaImage)?>"><?php if($metaStructured):?><script type="application/ld+json"><?=json_encode($metaStructured,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_HEX_TAG|JSON_HEX_AMP)?></script><?php endif;?><script>window.pagespeed=window.pagespeed||{};window.pagespeed.CriticalImages=window.pagespeed.CriticalImages||{checkImageForCriticality:function(){}};</script>
     <title><?=e($metaTitle)?></title>
     <link rel="icon" href="<?=e(url('assets/images/favicon.svg'))?>" type="image/svg+xml">
-    <link rel="stylesheet" href="<?=e(url('assets/css/app.css?v=1.13.31'))?>"></head><body data-app-name="<?=e($name)?>">
+    <link rel="stylesheet" href="<?=e(url('assets/css/app.css?v=1.13.65'))?>"></head><body data-app-name="<?=e($name)?>" data-store-key="<?=e(store_identifier($name))?>">
     <div class="shell"><aside class="sidebar">
-      <a class="brand" href="<?=e(url(''))?>"><img src="<?=e(url('assets/images/logo.svg'))?>" alt="<?=e($name)?>"></a>
+      <a class="brand" href="<?=e(url(''))?>"><img src="<?=e(url('assets/images/logo.svg'))?>" alt=""><span class="brand-name"><?=e($name)?></span></a>
       <button class="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="mobileSiteNav"><span class="mobile-menu-icon">☰</span><span>Menu</span></button>
       <?php $navGenres=$pdo->query('SELECT id,name,slug FROM genres ORDER BY name')->fetchAll(); ?>
-      <div id="mobileSiteNav" class="mobile-nav-panel"><nav class="side-nav">
+      <div id="mobileSiteNav" class="mobile-nav-panel"><nav class="side-nav" data-shell-state="<?=e($shellState)?>">
 <a class="nav <?=in_array($page,['index.php',''],true)?'active':''?>" href="<?=e(url(''))?>"><span>⌂</span>Home</a>
         <a class="nav <?=in_array($page,['new-tracks.php','new-tracks'],true)?'active':''?>" href="<?=e(url('new-tracks'))?>"><span>✦</span>New Tracks</a>
+        <?php if($u&&(!empty($u['is_artist'])||!empty($u['is_admin']))):?><a class="nav <?=in_array($page,['artist-management.php','artist-management'],true)?'active':''?>" href="<?=e(url('artist-management'))?>"><span>♬</span>Management</a><?php endif;?>
 <a class="nav <?=in_array($page,['tracks.php','tracks'],true)?'active':''?>" href="<?=e(url('tracks'))?>"><span>♫</span>All Tracks</a>
         <a class="nav <?=in_array($page,['artists.php','artists'],true)?'active':''?>" href="<?=e(url('artists'))?>"><span>◉</span>Artists</a>
         <div class="nav-flyout"><a class="nav <?=in_array($page,['genres.php','genres'],true)?'active':''?>" href="<?=e(url('genres'))?>"><span>◇</span>Genres<b aria-hidden="true">›</b></a><div class="nav-submenu"><a href="<?=e(url('genres'))?>">All genres</a><?php foreach($navGenres as $g):?><a href="<?=e(url('genres/'.rawurlencode($g['slug'])))?>"><?=e($g['name'])?></a><?php endforeach;?></div></div>
@@ -127,7 +190,7 @@ function layout_header(string $title=''): void {
         <?php if($u): ?><a href="<?=e(url('account.php'))?>"><span class="mobile-account-glyph">◉</span><span>My Account</span></a><a href="<?=e(url('favourites.php'))?>"><span class="mobile-account-glyph">♥</span><span>Favourites</span></a><?php if(!empty($u['is_admin'])):?><a href="<?=e(url('admin.php'))?>"><span class="mobile-account-glyph">♟</span><span>Admin</span></a><?php endif;?><?php else:?><a href="<?=e(url('login.php'))?>"><span class="mobile-account-glyph">↪</span><span>Login</span></a><a href="<?=e(url('register.php'))?>"><span class="mobile-account-glyph">＋</span><span>Register</span></a><?php endif;?>
         <a class="mobile-cart-link" href="<?=e(url('cart.php'))?>"><span class="mobile-account-glyph">🛒</span><span>Cart</span> <span class="pill"><?=$cartCount?></span></a>
       </nav>
-      <div class="sidebar-note payment-note"><strong>Secure payment</strong><small>Encrypted checkout for your track purchases.</small></div></div>
+      <div class="sidebar-note newsletter-note"><strong>New music</strong><small>Get release updates and occasional offers.</small><a class="button secondary tiny" href="<?=e(url('newsletter.php'))?>">Subscribe</a></div></div>
     </aside>
     <main class="main"><header class="topbar"><form class="search" action="tracks"><span>⌕</span><input name="q" placeholder="Search artist or track name..." autocomplete="off"></form><nav class="top-actions">
     <?php if($u): ?><a href="<?=e(url('account.php'))?>"><span class="mobile-account-glyph">◉</span><span>My Account</span></a><a href="<?=e(url('favourites.php'))?>"><span class="mobile-account-glyph">♥</span><span>Favourites</span></a><?php if(!empty($u['is_admin'])):?><a href="<?=e(url('admin.php'))?>"><span class="mobile-account-glyph">♟</span><span>Admin</span></a><?php endif;?><?php else:?><a href="<?=e(url('login.php'))?>"><span class="mobile-account-glyph">↪</span><span>Login</span></a><a href="<?=e(url('register.php'))?>"><span class="mobile-account-glyph">＋</span><span>Register</span></a><?php endif;?>
@@ -135,8 +198,9 @@ function layout_header(string $title=''): void {
     <?php
 }
 function layout_footer(): void { ?>
-    </div></main></div>
-    <section class="newsletter-cta"><div><span class="kicker">NEW MUSIC</span><strong>Get release updates</strong><small>Occasional news, new tracks and offers.</small></div><a class="button secondary tiny" href="<?=e(url('newsletter.php'))?>">Subscribe</a><nav class="legal-links" aria-label="Legal"><a href="<?=e(url('terms.php'))?>">Terms &amp; licensing</a><a href="<?=e(url('refunds.php'))?>">Refund policy</a><a href="<?=e(url('privacy.php'))?>">Privacy</a><a href="<?=e(url('cookies.php'))?>">Cookies</a></nav></section>
+    </div>
+    <footer class="site-footer"><nav class="legal-links" aria-label="Legal"><a href="<?=e(url('support'))?>">Customer support</a><a href="<?=e(url('terms.php'))?>">Terms &amp; licensing</a><a href="<?=e(url('refunds.php'))?>">Refund policy</a><a href="<?=e(url('privacy.php'))?>">Privacy</a><a href="<?=e(url('cookies.php'))?>">Cookies</a></nav></footer>
+    </main></div>
     <div id="audioPlayer" class="audio-player" hidden>
       <div class="player-art-wrap"><img id="playerArt" src="<?=e(url('assets/images/empty-art.svg'))?>" alt=""><span class="preview-chip">90 SEC PREVIEW</span></div>
       <div class="player-info">
@@ -149,7 +213,7 @@ function layout_footer(): void { ?>
       </div>
       <div class="player-controls"><button id="playerBack" class="player-icon" aria-label="Restart preview" title="Restart">↶</button><button id="playerToggle" class="player-toggle" aria-label="Play or pause preview">▶</button><button id="playerMute" class="player-icon" aria-label="Mute preview" title="Mute">◕</button></div><button id="playerClose" class="player-close" type="button" aria-label="Close preview player" title="Close preview player">×</button>
     </div>
-    <script src="<?=e(url('assets/js/app.js?v=1.13.31'))?>"></script><script src="<?=e(url('assets/js/player.js?v=1.13.31'))?>"></script></body></html><?php }
+    <script src="<?=e(url('assets/js/app.js?v=1.13.57'))?>"></script><script src="<?=e(url('assets/js/player.js?v=1.13.57'))?>"></script></body></html><?php }
 
 function track_artwork_path(array $t): ?string {
     return $t['track_artwork_path'] ?? $t['artwork_path'] ?? $t['release_artwork_path'] ?? null;
@@ -167,7 +231,8 @@ function track_card(array $t): string {
     $art=track_artwork_url($t);
     $preview=track_preview_url($t);
     $mix=trim((string)($t['mix_name']??''));
-    $meta=e($t['artist_name']).($mix!==''?' · '.e($mix):'');
+    $credit=track_artist_credit($t);
+    $meta=e($credit).($mix!==''?' · '.e($mix):'');
     $trackId=(int)($t['id']??0);
     $csrf=e(csrf_token());
     $info=e(track_public_url($t));
@@ -177,11 +242,11 @@ function track_card(array $t): string {
     $favUrl=e(url('favourites.php'));
     $favMarkup=$u
         ? '<form method="post" action="'.$favUrl.'" class="favourite-form"><input type="hidden" name="csrf" value="'.$csrf.'"><input type="hidden" name="track_id" value="'.$trackId.'"><input type="hidden" name="ajax" value="1"><button type="submit" class="square-link favourite-toggle '.($fav?'is-favourite':''). '" aria-label="'.($fav?'Remove':'Save').' '.e($t['title']).' '.($fav?'from':'to').' favourites" title="'.($fav?'Remove from':'Save to').' favourites">'.($fav?'♥':'♡').'</button></form>'
-        : '<a class="square-link favourite-toggle" href="'.e(url('login.php?next='.rawurlencode('tracks/'.track_public_slug($t)).'&favourite='.$trackId)).'" aria-label="Log in to save '.e($t['title']).'" title="Log in to save">♡</a>';    return '<article class="release-card" data-favourite-track-id="'.$trackId.'"><div class="release-art"><img src="'.e($art).'" alt=""><button class="preview-fab play" data-preview="'.e($preview).'" data-title="'.e($t['title']).'" data-artist="'.e($t['artist_name']).'" data-art="'.e($art).'">▶</button></div><div class="release-info"><div><h3>'.e($t['title']).'</h3><p>'.$meta.'</p></div><div class="release-buy"><strong>'.money((int)$t['price_pence']).'</strong><div class="release-actions">'.$favMarkup.'<form method="post" action="'.$add.'" class="quick-add-form"><input type="hidden" name="csrf" value="'.$csrf.'"><input type="hidden" name="ajax" value="1"><button type="submit" class="square-link quick-add-button" aria-label="Add '.e($t['title']).' to cart" title="Add to cart">🛒</button></form><a class="square-link info-link" href="'.$info.'" aria-label="View '.e($t['title']).'" title="View track information">i</a></div></div></div></article>';
+        : '<a class="square-link favourite-toggle" href="'.e(url('login.php?next='.rawurlencode('tracks/'.track_public_slug($t)).'&favourite='.$trackId)).'" aria-label="Log in to save '.e($t['title']).'" title="Log in to save">♡</a>';    return '<article class="release-card" data-favourite-track-id="'.$trackId.'"><div class="release-art"><img src="'.e($art).'" alt=""><button class="preview-fab play" data-preview="'.e($preview).'" data-track-id="'.$trackId.'" data-title="'.e($t['title']).'" data-artist="'.e($credit).'" data-art="'.e($art).'">▶</button></div><div class="release-info"><div><h3>'.e($t['title']).'</h3><p>'.$meta.'</p></div><div class="release-buy"><strong>'.money((int)$t['price_pence']).'</strong><div class="release-actions">'.$favMarkup.'<form method="post" action="'.$add.'" class="quick-add-form"><input type="hidden" name="csrf" value="'.$csrf.'"><input type="hidden" name="ajax" value="1"><button type="submit" class="square-link quick-add-button" aria-label="Add '.e($t['title']).' to cart" title="Add to cart">🛒</button></form><a class="square-link info-link" href="'.$info.'" aria-label="View '.e($t['title']).'" title="View track information">i</a></div></div></div></article>';
 }
 function audio_upload_error_message(int $code): string {
     return match ($code) {
-        UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'The audio file is larger than the PHP/hosting panel upload limit.',
+        UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'The audio file is larger than the PHP/Plesk upload limit.',
         UPLOAD_ERR_PARTIAL => 'The audio upload was interrupted. Please try again.',
         UPLOAD_ERR_NO_FILE => 'Choose a WAV or MP3 master file.',
         UPLOAD_ERR_NO_TMP_DIR => 'The server upload temporary directory is unavailable.',
@@ -224,7 +289,7 @@ function run_ffmpeg(array $args): void {
     exec($cmd . ' 2>&1', $output, $rc);
     if ($rc !== 0) {
         $detail = trim(implode("\n", array_slice($output, -8)));
-        error_log('RecordStore ffmpeg error: '.$detail);
+        error_log('' . site_name() . ': '.$detail);
         throw new RuntimeException('ffmpeg could not generate the preview. Check the selected preview times and the server log.');
     }
 }
@@ -302,7 +367,7 @@ function generate_preview_from_master(string $masterPath, array $starts): array 
         $tmp[] = $concat;
         $lines = array_map(static fn($p) => "file '".str_replace("'", "'\\''", $p)."'", $concatParts);
         file_put_contents($concat, implode("\n", $lines)."\n");
-        run_ffmpeg(['-hide_banner','-loglevel','error','-y','-f','concat','-safe','0','-i',$concat,'-vn','-codec:a','aac','-b:a','192k','-ar','44100','-ac','2','-t','90','-af','afade=t=in:st=0:d=5,afade=t=out:st=85:d=5','-movflags','+faststart','-metadata','title=RecordStore 90 Second Preview',$previewPath]);
+        run_ffmpeg(['-hide_banner','-loglevel','error','-y','-f','concat','-safe','0','-i',$concat,'-vn','-codec:a','aac','-b:a','192k','-ar','44100','-ac','2','-t','90','-af','afade=t=in:st=0:d=5,afade=t=out:st=85:d=5','-movflags','+faststart','-metadata','title='.site_name().' 90 Second Preview',$previewPath]);
         @chmod($previewPath, 0644);
     } catch (Throwable $e) {
         @unlink($previewPath);
@@ -531,6 +596,45 @@ function paypal_request(string $method, string $path, ?array $body=null, ?string
     return is_array($data)?$data:[];
 }
 function paypal_money_value(int $pence): string { return number_format($pence/100,2,'.',''); }
+function paypal_refund_capture(string $captureId,int $orderId,int $totalPence): array {
+    if($captureId===''||$orderId<1||$totalPence<1)throw new RuntimeException('The PayPal capture details are incomplete.');
+    $c=paypal_config();
+    return paypal_request('POST','/v2/payments/captures/'.rawurlencode($captureId).'/refund',['amount'=>['value'=>paypal_money_value($totalPence),'currency_code'=>$c['currency']],'note_to_payer'=>'Refund from '.site_name().' for order #'.$orderId],store_identifier(site_name()).'-refund-'.$orderId);
+}
+function payout_host_percent(): float { $value=(float)store_setting('payout_host_percent','10');return max(0,min(100,$value)); }
+function payout_automatic_enabled(): bool { return store_setting('payout_automatic_enabled','0')==='1'; }
+function payout_paypal_confirmed(): bool { return store_setting('payout_paypal_confirmed','0')==='1'; }
+function payout_items_for_artist(int $artistId,string $start,string $end): array {
+    global $pdo;
+    if($artistId<1||!preg_match('/^\d{4}-\d{2}-\d{2}$/',$start)||!preg_match('/^\d{4}-\d{2}-\d{2}$/',$end))return [];
+    $st=$pdo->prepare("SELECT oi.id order_item_id,oi.unit_price_pence,t.title,t.mix_name,COUNT(DISTINCT all_ta.artist_id) artist_count,MIN(mine_ta.sort_order) artist_sort_order FROM order_items oi JOIN orders o ON o.id=oi.order_id AND o.status='paid' AND DATE(o.paid_at) BETWEEN ? AND ? JOIN tracks t ON t.id=oi.track_id JOIN track_artists mine_ta ON mine_ta.track_id=t.id AND mine_ta.artist_id=? JOIN track_artists all_ta ON all_ta.track_id=t.id WHERE NOT EXISTS (SELECT 1 FROM artist_payout_items api WHERE api.order_item_id=oi.id AND api.artist_id=?) GROUP BY oi.id,oi.unit_price_pence,t.title,t.mix_name,o.paid_at ORDER BY o.paid_at,oi.id");
+    $st->execute([$start,$end,$artistId,$artistId]);$percent=payout_host_percent();$items=[];$gross=0;$host=0;$share=0;
+    foreach($st->fetchAll() as $row){$itemGross=(int)$row['unit_price_pence'];$itemHost=(int)round($itemGross*$percent/100);$pool=max(0,$itemGross-$itemHost);$count=max(1,(int)$row['artist_count']);$base=intdiv($pool,$count);$remainder=$pool-($base*$count);$itemShare=$base+((int)$row['artist_sort_order']===0?$remainder:0);$items[]=['order_item_id'=>(int)$row['order_item_id'],'title'=>(string)$row['title'],'mix_name'=>(string)($row['mix_name']??''),'gross_pence'=>$itemGross,'host_fee_pence'=>$itemHost,'artist_share_pence'=>$itemShare];$gross+=$itemGross;$host+=$itemHost;$share+=$itemShare;}
+    return ['items'=>$items,'gross_pence'=>$gross,'host_fee_pence'=>$host,'payout_pence'=>$share,'host_percent'=>$percent];
+}
+function payout_items_for_user(int $userId,string $start,string $end): array {
+    global $pdo;
+    if($userId<1||!preg_match('/^\d{4}-\d{2}-\d{2}$/',$start)||!preg_match('/^\d{4}-\d{2}-\d{2}$/',$end))return [];
+    $st=$pdo->prepare("SELECT oi.id order_item_id,oi.unit_price_pence,t.title,t.mix_name,mine_ta.artist_id,mine_ta.sort_order artist_sort_order,mine_a.name artist_name,COUNT(DISTINCT all_ta.artist_id) artist_count FROM order_items oi JOIN orders o ON o.id=oi.order_id AND o.status='paid' AND DATE(o.paid_at) BETWEEN ? AND ? JOIN tracks t ON t.id=oi.track_id JOIN track_artists mine_ta ON mine_ta.track_id=t.id JOIN artists mine_a ON mine_a.id=mine_ta.artist_id AND mine_a.owner_user_id=? JOIN track_artists all_ta ON all_ta.track_id=t.id WHERE NOT EXISTS (SELECT 1 FROM artist_payout_items api WHERE api.order_item_id=oi.id AND api.artist_id=mine_ta.artist_id) GROUP BY oi.id,oi.unit_price_pence,t.title,t.mix_name,mine_ta.artist_id,mine_ta.sort_order,mine_a.name,o.paid_at ORDER BY o.paid_at,oi.id,mine_ta.sort_order");
+    $st->execute([$start,$end,$userId]);$percent=payout_host_percent();$items=[];$gross=0;$host=0;$share=0;$seen=[];
+    foreach($st->fetchAll() as $row){$itemId=(int)$row['order_item_id'];$itemGross=(int)$row['unit_price_pence'];$itemHost=(int)round($itemGross*$percent/100);$pool=max(0,$itemGross-$itemHost);$count=max(1,(int)$row['artist_count']);$base=intdiv($pool,$count);$itemShare=$base+((int)$row['artist_sort_order']===0?$pool-($base*$count):0);$items[]=['order_item_id'=>$itemId,'artist_id'=>(int)$row['artist_id'],'artist_name'=>(string)$row['artist_name'],'title'=>(string)$row['title'],'mix_name'=>(string)($row['mix_name']??''),'gross_pence'=>$itemGross,'host_fee_pence'=>$itemHost,'artist_share_pence'=>$itemShare];if(!isset($seen[$itemId])){$gross+=$itemGross;$host+=$itemHost;$seen[$itemId]=true;}$share+=$itemShare;}
+    return ['items'=>$items,'gross_pence'=>$gross,'host_fee_pence'=>$host,'payout_pence'=>$share,'host_percent'=>$percent];
+}
+function send_artist_payout_reconciliation(string $recipient,string $artistName,string $start,string $end,int $payoutPence,array $items,string $status='paid'): void {
+    if(!filter_var($recipient,FILTER_VALIDATE_EMAIL)) return;
+    $lines=['Hello '.$artistName.',','',site_name().' has marked your artist payout as '.$status.'.','Period: '.$start.' to '.$end,'','Sales reconciliation:'];
+    foreach($items as $sale) $lines[]=(string)$sale['title'].(!empty($sale['mix_name'])?' ('.$sale['mix_name'].')':'').' — '.money((int)$sale['artist_share_pence']);
+    $lines[]='';$lines[]='Total: '.money($payoutPence);$lines[]='This reconciliation is based on paid order items, after the host charge of '.number_format(payout_host_percent(),2).'% and the equal split between credited artists.';
+    send_store_mail($recipient,site_name().' artist payout reconciliation',implode("\n",$lines));
+}
+function paypal_create_payout(array $items,string $batchId,string $currency='GBP'): array {
+    $payload=['sender_batch_header'=>['sender_batch_id'=>$batchId,'email_subject'=>site_name().' artist payout','email_message'=>'Your artist payout from '.site_name().' has been sent.'],'items'=>[]];
+    foreach($items as $item){$email=strtolower(trim((string)($item['paypal_email']??'')));if(!filter_var($email,FILTER_VALIDATE_EMAIL))throw new RuntimeException('Every payout recipient must have a valid PayPal email address.');$payload['items'][]=['recipient_type'=>'EMAIL','receiver'=>$email,'note'=>substr(site_name().' artist payout for '.$item['artist_name'],0,1000),'sender_item_id'=>'artist-'.$item['artist_id'].'-'.$item['payout_id'],'amount'=>['currency'=>$currency,'value'=>paypal_money_value((int)$item['artist_share_pence'])]];}
+    try{$response=paypal_request('POST','/v1/payments/payouts',$payload,$batchId);}catch(Throwable $e){global $pdo;foreach($items as $item)if(!empty($item['payout_id']))$pdo->prepare('DELETE FROM artist_payout_items WHERE payout_id=?')->execute([(int)$item['payout_id']]);throw $e;}
+    global $pdo;foreach($items as &$item){$pid=(int)($item['payout_id']??0);if($pid){$st=$pdo->prepare('SELECT period_start,period_end FROM artist_payouts WHERE id=?');$st->execute([$pid]);$period=$st->fetch();$item['period_start']=$period['period_start']??'';$item['period_end']=$period['period_end']??'';$st=$pdo->prepare('SELECT t.title,t.mix_name,api.artist_share_pence FROM artist_payout_items api JOIN order_items oi ON oi.id=api.order_item_id JOIN tracks t ON t.id=oi.track_id WHERE api.payout_id=? ORDER BY api.order_item_id');$st->execute([$pid]);$item['reconciliation_items']=$st->fetchAll();$item['host_percent']=payout_host_percent();}}unset($item);
+    foreach($items as $item){$recipient=strtolower(trim((string)($item['paypal_email']??'')));if(!filter_var($recipient,FILTER_VALIDATE_EMAIL))continue;$lines=['Hello '.(string)($item['artist_name']??'artist').',','',site_name().' has submitted your payout to PayPal.','Period: '.(string)($item['period_start']??'').' to '.(string)($item['period_end']??''),'','Sales reconciliation:'];foreach((array)($item['reconciliation_items']??[]) as $sale)$lines[]=(string)$sale['title'].(!empty($sale['mix_name'])?' ('.$sale['mix_name'].')':'').' — '.money((int)$sale['artist_share_pence']);$lines[]='';$lines[]='Total paid: '.money((int)($item['artist_share_pence']??0));$lines[]='This reconciliation is based on paid order items, after the host charge of '.number_format((float)($item['host_percent']??0),2).'% and the equal split between credited artists.';try{send_store_mail($recipient,site_name().' artist payout reconciliation',implode("\n",$lines));}catch(Throwable $ignored){error_log('Artist payout reconciliation email failed: '.$ignored->getMessage());}}
+    return $response;
+}
 function vat_rate(): float { $rate=(float)store_setting('vat_rate','0');return max(0,min(100,$rate)); }
 function create_pending_order_from_cart(int $userId): array {
     global $pdo,$config;
@@ -581,7 +685,7 @@ function mail_template_defaults(): array {
         'order_status'=>['label'=>'Payment/order status update','enabled'=>1,'subject'=>'Order {{order_id}} status update','body'=>"Hello {{customer_name}},\n\nYour order {{order_id}} status is now: {{status}}.\n\nTotal: {{total}}\n\n{{site_name}}"],
         'order_cancelled'=>['label'=>'Cancelled order','enabled'=>1,'subject'=>'Order {{order_id}} cancelled','body'=>"Hello {{customer_name}},\n\nYour order {{order_id}} has been cancelled. No further download access is available for this order.\n\n{{site_name}}"],
 'new_releases'=>['label'=>'New release announcement','enabled'=>1,'subject'=>'New music from {{site_name}}','body'=>"Hello {{customer_name}},\n\nHere are the latest releases from {{site_name}}:\n\n{{release_list}}\n\nBrowse the store: {{store_url}}\n\n{{site_name}}"],
-'abandoned_cart'=>['label'=>'Abandoned basket reminder','enabled'=>1,'subject'=>'Your RecordStore basket is waiting','body'=>"Hello {{customer_name}},\n\nYou left these tracks in your basket:\n\n{{cart_items}}\n\nReturn to your basket: {{cart_url}}\n\n{{site_name}}"],
+'abandoned_cart'=>['label'=>'Abandoned basket reminder','enabled'=>1,'subject'=>'Your {{site_name}} basket is waiting','body'=>"Hello {{customer_name}},\n\nYou left these tracks in your basket:\n\n{{cart_items}}\n\nReturn to your basket: {{cart_url}}\n\n{{site_name}}"],
     ];
 }
 function mail_templates(): array {
@@ -600,9 +704,12 @@ function mail_html_sanitize(string $html): string {
 function mail_html_from_plain(string $body): string { return nl2br(htmlspecialchars($body,ENT_QUOTES,'UTF-8')); }
 function render_mail_template(string $key,array $vars): ?array {
     $all=mail_templates();$template=$all[$key]??null;if(!$template||empty($template['enabled']))return null;
-    $replace=[];foreach($vars as $name=>$value)$replace['{{'.$name.'}}']=(string)$value;
+    $replace=['{{site_name}}'=>site_name()];foreach($vars as $name=>$value)$replace['{{'.$name.'}}']=(string)$value;
     $plain=strtr((string)$template['body'],$replace);$html=(string)($template['html_body']??'');$html=$html!==''?mail_html_sanitize(strtr($html,$replace)):mail_html_from_plain($plain);
-    return ['subject'=>strtr((string)$template['subject'],$replace),'body'=>$plain,'html_body'=>'<style>'.mail_theme_css().'</style>'.$html];
+    $subject=strtr((string)$template['subject'],$replace);
+    // Replace the old generic package name in templates already saved in the database.
+    $plain=str_replace('RecordStore',site_name(),$plain);$html=str_replace('RecordStore',site_name(),$html);$subject=str_replace('RecordStore',site_name(),$subject);
+    return ['subject'=>$subject,'body'=>$plain,'html_body'=>'<style>'.mail_theme_css().'</style>'.$html];
 }function track_public_slug(array $track): string { return slugify((string)($track['title']??'track')).'-t'.(int)($track['id']??0); }
 function track_public_url(array $track): string { return url('tracks/'.rawurlencode(track_public_slug($track))); }
 function notify_order_mail(int $orderId,string $templateKey): void {
@@ -613,3 +720,12 @@ function notify_order_mail(int $orderId,string $templateKey): void {
         send_store_mail((string)$order['email'],$mail['subject'],$mail['body'],$mail['html_body']??null);
     }catch(Throwable $e){error_log('Order email error for #'.$orderId.': '.$e->getMessage());}
 }
+function security_token(): string { return bin2hex(random_bytes(32)); }
+function security_token_hash(string $token): string { return hash('sha256',$token); }
+function security_session_hash(): string { return hash('sha256',session_id()); }
+function record_user_session(int $userId): void { global $pdo;try{$pdo->prepare('INSERT INTO user_sessions(user_id,session_hash,expires_at,ip_address,user_agent) VALUES(?,?,DATE_ADD(NOW(),INTERVAL 30 DAY),INET6_ATON(?),?) ON DUPLICATE KEY UPDATE last_seen_at=NOW(),revoked_at=NULL')->execute([$userId,security_session_hash(),$_SERVER['REMOTE_ADDR']??null,substr((string)($_SERVER['HTTP_USER_AGENT']??''),0,512)]);}catch(Throwable $ignored){} }
+function revoke_user_session(): void { global $pdo;try{$pdo->prepare('UPDATE user_sessions SET revoked_at=NOW() WHERE session_hash=?')->execute([security_session_hash()]);}catch(Throwable $ignored){} }
+function totp_base32_encode(string $value): string { $alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';$bits='';foreach(str_split($value) as $char)$bits.=str_pad(decbin(ord($char)),8,'0',STR_PAD_LEFT);$out='';for($i=0;$i<strlen($bits);$i+=5){$chunk=substr($bits,$i,5);if(strlen($chunk)<5)$chunk=str_pad($chunk,5,'0');$out.=$alphabet[bindec($chunk)];}return $out; }
+function totp_base32_decode(string $value): string { $alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';$value=strtoupper(preg_replace('/[^A-Z2-7]/','',$value)??'');$bits='';foreach(str_split($value) as $char){$pos=strpos($alphabet,$char);if($pos===false)continue;$bits.=str_pad(decbin($pos),5,'0',STR_PAD_LEFT);} $out='';for($i=0;$i+8<=strlen($bits);$i+=8)$out.=chr(bindec(substr($bits,$i,8)));return $out; }
+function totp_code(string $secret,?int $time=null): string { $counter=intdiv($time??time(),30);$bin=pack('N*',0,$counter);$hash=hash_hmac('sha1',$bin,totp_base32_decode($secret),true);$offset=ord($hash[19])&15;$num=((ord($hash[$offset])&127)<<24)|((ord($hash[$offset+1])&255)<<16)|((ord($hash[$offset+2])&255)<<8)|(ord($hash[$offset+3])&255);return str_pad((string)($num%1000000),6,'0',STR_PAD_LEFT); }
+function totp_verify(string $secret,string $code): bool { $code=preg_replace('/\D/','',$code)??'';for($offset=-1;$offset<=1;$offset++)if(hash_equals(totp_code($secret,time()+$offset*30),$code))return true;return false; }

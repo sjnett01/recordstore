@@ -6,6 +6,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf();
     $action = (string)($_POST['action'] ?? '');
 
+    if ($action === 'admin_disable_2fa' && !empty($u['is_admin'])) {
+        try {
+            $code = (string)($_POST['code'] ?? '');
+            $st = $pdo->prepare('SELECT admin_2fa_secret,admin_2fa_enabled FROM users WHERE id=?');
+            $st->execute([(int)$u['id']]);
+            $twofa = $st->fetch();
+            if (!$twofa || (int)$twofa['admin_2fa_enabled'] !== 1 || !totp_verify((string)$twofa['admin_2fa_secret'], $code)) {
+                throw new RuntimeException('That authenticator code is not valid.');
+            }
+            $pdo->prepare('UPDATE users SET admin_2fa_enabled=0 WHERE id=?')->execute([(int)$u['id']]);
+            unset($_SESSION['admin_2fa_verified']);
+            $_SESSION['account_flash'] = ['message' => 'Administrator 2FA has been disabled.', 'error' => false];
+        } catch (Throwable $e) {
+            $_SESSION['account_flash'] = ['message' => $e->getMessage(), 'error' => true];
+        }
+        redirect('account.php');
+    }
+
     if ($action === 'customer_cancel_pending_order') {
         $orderId = (int)($_POST['order_id'] ?? 0);
         if ($orderId <= 0) {
@@ -110,6 +128,13 @@ layout_header('My Account');
     </div>
 <?php endif; ?>
 
+<?php if (!empty($u['is_admin'])): ?>
+<section class="panel account-security-panel">
+    <div class="account-history-head"><div><h2>Administrator security</h2><p class="muted">Disable administrator two-factor authentication only if you have the current authenticator code.</p></div><a class="button secondary" href="admin-2fa.php">Manage 2FA</a></div>
+    <form method="post" class="account-security-form" data-no-async><input type="hidden" name="action" value="admin_disable_2fa"><input type="hidden" name="csrf" value="<?=e(csrf_token())?>"><label>Current authenticator code<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label><button class="button danger" type="submit">Disable administrator 2FA</button></form>
+</section>
+<?php endif; ?>
+
 <section class="panel account-history">
     <div class="account-history-head">
         <div>
@@ -186,15 +211,15 @@ layout_header('My Account');
         </div>
     <?php endif; ?>
 
-<dialog class="recordstore-modal" id="cancel-order-modal" aria-labelledby="cancel-order-modal-title">
-    <div class="recordstore-modal-card">
-        <div class="recordstore-modal-icon" aria-hidden="true">!</div>
-        <div class="recordstore-modal-copy">
+<dialog class="modal" id="<?=e(store_dom_id('cancel-order-modal'))?>" data-cancel-order-modal aria-labelledby="<?=e(store_dom_id('cancel-order-modal-title'))?>">
+    <div class="modal-card">
+        <div class="modal-icon" aria-hidden="true">!</div>
+        <div class="modal-copy">
             <span class="kicker">Pending order</span>
-            <h2 id="cancel-order-modal-title">Cancel order <span data-cancel-order-number></span>?</h2>
+            <h2 id="<?=e(store_dom_id('cancel-order-modal-title'))?>">Cancel order <span data-cancel-order-number></span>?</h2>
             <p>This will close the pending order and you will no longer be able to complete its payment. No payment has been taken.</p>
         </div>
-        <div class="recordstore-modal-actions">
+        <div class="modal-actions">
             <button class="button secondary" type="button" data-cancel-order-close>Keep order</button>
             <button class="button danger" type="button" data-cancel-order-confirm>Cancel order</button>
         </div>

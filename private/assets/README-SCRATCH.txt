@@ -4,7 +4,7 @@ Place your chosen scratch sound here as:
     scratch.wav
 
 MP3 is also supported if you set app.scratch_fx_path in config.php, for example:
-    'scratch_fx_path' => '/var/www/vhosts/example.com/private/assets/scratch.mp3',
+    'scratch_fx_path' => 'private/assets/scratch.mp3',
 
 The preview builder trims the effect to 0.75 seconds and inserts it between preview sections 1/2 and 2/3.
 The three music sections are shortened to 29.5 seconds so the finished preview remains approximately 90 seconds.

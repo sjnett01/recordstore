@@ -24,7 +24,7 @@ try {
             throw new RuntimeException('PayPal has not completed this payment yet.');
         }
         if ($d['currency'] !== $pc['currency'] || $d['value'] !== paypal_money_value((int)$order['total_pence'])) {
-            throw new RuntimeException('PayPal payment amount did not match the RecordStore order.');
+            throw new RuntimeException('PayPal payment amount did not match the '.site_name().' order.');
         }
         mark_order_paid_from_paypal((int)$order['id'], $paypalId, $d['id'], $payload);
     };
@@ -62,7 +62,7 @@ try {
 
     throw new RuntimeException('PayPal no longer provides a payment approval link for this order.');
 } catch (Throwable $e) {
-    error_log('RecordStore PayPal resume error: ' . $e->getMessage());
+    error_log(site_name() . ' PayPal resume error: ' . $e->getMessage());
     $_SESSION['payment_flash'] = 'This payment could not be resumed. Please return to your cart and start checkout again.';
     redirect('account.php');
 }

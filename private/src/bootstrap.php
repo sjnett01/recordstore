@@ -13,16 +13,7 @@ if (!is_readable($configFile)) {
 $config = require $configFile;
 date_default_timezone_set($config['app']['timezone'] ?? 'Europe/London');
 
-if (session_status() !== PHP_SESSION_ACTIVE) {
-    session_name($config['app']['session_name'] ?? 'recordstore_session');
-    session_set_cookie_params([
-        'httponly' => true,
-        'secure' => true,
-        'samesite' => 'Lax',
-        'path' => '/',
-    ]);
-    session_start();
-}
+
 
 $dsn = sprintf(
     'mysql:host=%s;port=%d;dbname=%s;charset=%s',
@@ -59,4 +50,25 @@ if (PHP_SAPI !== 'cli') {
     }
 }
 
+// Use the configured Store name as the session namespace. The value is reduced to
+// a safe cookie identifier; changing the Store name intentionally starts a new
+// session namespace and does not expose the raw name in the cookie.
+$sessionStoreName = trim((string)($config['app']['name'] ?? 'Store')) ?: 'Store';
+try {
+    $setting = $pdo->prepare('SELECT setting_value FROM store_settings WHERE setting_key=? LIMIT 1');
+    $setting->execute(['site_name']);
+    $sessionStoreName = trim((string)($setting->fetchColumn() ?: $sessionStoreName)) ?: $sessionStoreName;
+} catch (Throwable $ignored) {}
+$sessionPrefix = strtolower((string)preg_replace('/[^a-z0-9]+/i', '_', $sessionStoreName));
+$sessionPrefix = trim($sessionPrefix, '_') ?: 'store';
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_name(substr($sessionPrefix.'_session', 0, 64));
+    session_set_cookie_params([
+        'httponly' => true,
+        'secure' => true,
+        'samesite' => 'Lax',
+        'path' => '/',
+    ]);
+    session_start();
+}
 require_once __DIR__.'/functions.php';

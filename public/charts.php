@@ -8,6 +8,7 @@ $genreName='Overall';$genreSlug='';foreach($genres as $g){if((int)$g['id']===$ge
 $params=[];$where=["o.status='paid'"];
 if($days!=='all'){$where[]='o.paid_at >= DATE_SUB(NOW(), INTERVAL '.(int)$days.' DAY)';}
 if($genreId>0){$where[]='t.genre_id=?';$params[]=$genreId;}
+$where[]='t.active=1';
 $sql="SELECT t.id,t.title,t.mix_name,t.price_pence,t.bpm,t.preview_path,t.artwork_path track_artwork_path,r.artwork_path release_artwork_path,a.name artist_name,g.name genre_name,COUNT(oi.id) units,SUM(oi.unit_price_pence) revenue FROM order_items oi JOIN orders o ON o.id=oi.order_id JOIN tracks t ON t.id=oi.track_id JOIN artists a ON a.id=t.artist_id LEFT JOIN releases r ON r.id=t.release_id LEFT JOIN genres g ON g.id=t.genre_id WHERE ".implode(' AND ',$where)." GROUP BY t.id ORDER BY units DESC,revenue DESC,t.title LIMIT 100";
 $st=$pdo->prepare($sql);$st->execute($params);$tracks=$st->fetchAll();
 layout_header($genreName.' Chart');?>

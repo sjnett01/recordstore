@@ -20,7 +20,7 @@ if ((!$path || !is_file($path)) && preg_match('/\.(?:mp3|m4a|aac|mp4)$/i',$relat
 if (!$path || !$root || !str_starts_with($path, $root.DIRECTORY_SEPARATOR) || !is_file($path)) {
     http_response_code(404); exit;
 }
-// Ensure PHP/hosting panel output buffering or compression cannot invalidate byte offsets.
+// Ensure PHP/Plesk output buffering or compression cannot invalidate byte offsets.
 @ini_set('zlib.output_compression', '0');
 while (ob_get_level() > 0) { @ob_end_clean(); }
 set_time_limit(0);

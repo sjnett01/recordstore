@@ -26,14 +26,27 @@
     if (content) content.setAttribute('aria-busy', loading ? 'true' : 'false');
   };
 
-  const syncShell = doc => {
+  const syncMenuActiveState = (incomingMenu, currentMenu) => {
+    if (!incomingMenu || !currentMenu) return;
+    const incomingLinks = new Map([...incomingMenu.querySelectorAll('a[href]')].map(link => [link.getAttribute('href'), link]));
+    currentMenu.querySelectorAll('a[href]').forEach(link => {
+      const incomingLink = incomingLinks.get(link.getAttribute('href'));
+      if (incomingLink) link.classList.toggle('active', incomingLink.classList.contains('active'));
+    });
+  };
+
+  const syncAuthShell = doc => {
     const incomingTop = doc.querySelector('.top-actions');
     const currentTop = document.querySelector('.top-actions');
     if (incomingTop && currentTop) currentTop.innerHTML = incomingTop.innerHTML;
 
     const incomingNav = doc.querySelector('.side-nav');
     const currentNav = document.querySelector('.side-nav');
-    if (incomingNav && currentNav) currentNav.innerHTML = incomingNav.innerHTML;
+    if (incomingNav && currentNav && incomingNav.dataset.shellState !== currentNav.dataset.shellState) {
+      currentNav.innerHTML = incomingNav.innerHTML;
+      currentNav.dataset.shellState = incomingNav.dataset.shellState || '';
+    }
+    syncMenuActiveState(incomingNav, currentNav);
   };
 
   const applyDocument = (html, url, push = true) => {
@@ -46,12 +59,34 @@
       return;
     }
 
-    current.innerHTML = incoming.innerHTML;
+    const incomingAdmin = incoming.querySelector('.admin-shell');
+    const currentAdmin = current.querySelector('.admin-shell');
+    if (incomingAdmin && currentAdmin) {
+      const incomingWorkspace = incomingAdmin.querySelector('.admin-workspace');
+      const currentWorkspace = currentAdmin.querySelector('.admin-workspace');
+      if (!incomingWorkspace || !currentWorkspace) {
+        window.location.href = url;
+        return;
+      }
+      currentWorkspace.replaceChildren(...incomingWorkspace.childNodes);
+      for (const attribute of incomingAdmin.attributes) {
+        if (attribute.name !== 'class') currentAdmin.setAttribute(attribute.name, attribute.value);
+      }
+      for (const attribute of [...currentAdmin.attributes]) {
+        if (attribute.name !== 'class' && !incomingAdmin.hasAttribute(attribute.name)) currentAdmin.removeAttribute(attribute.name);
+      }
+      syncMenuActiveState(incomingAdmin.querySelector('.admin-menu-nav'), currentAdmin.querySelector('.admin-menu-nav'));
+    } else if (!incomingAdmin && !currentAdmin) {
+      current.replaceChildren(...incoming.childNodes);
+    } else {
+      window.location.href = url;
+      return;
+    }
     document.title = doc.title || document.title;
-    syncShell(doc);
-    if (push) history.pushState({ recordstore: true }, '', url);
+    syncAuthShell(doc);
+    if (push) history.pushState({ app: true }, '', url);
     window.scrollTo({ top: 0, behavior: 'instant' });
-    document.dispatchEvent(new CustomEvent('recordstore:navigated', { detail: { url } }));
+    document.dispatchEvent(new CustomEvent('app:navigated', { detail: { url } }));
   };
 
   const navigate = async (url, options = {}) => {
@@ -66,7 +101,7 @@
         body: options.body || null,
         credentials: 'same-origin',
         headers: {
-          'X-RecordStore-Async': '1',
+          'X-App-Async': '1',
           'X-Requested-With': 'fetch',
           ...(options.headers || {})
         },
@@ -85,7 +120,7 @@
       applyDocument(html, response.url || url, options.push !== false);
     } catch (error) {
       if (error.name !== 'AbortError') {
-        console.warn('RecordStore async navigation fallback:', error);
+        console.warn('Application async navigation fallback:', error);
         window.location.href = url;
       }
     } finally {
@@ -116,7 +151,7 @@
       else link.textContent = original;
       const dl = document.createElement('a'); dl.href = data.download_url; dl.download = ''; dl.style.display = 'none'; document.body.appendChild(dl); dl.click(); dl.remove();
     } catch (error) {
-      console.warn('RecordStore download error:', error); link.textContent = original; alert(error.message || 'Download could not be prepared.');
+      console.warn('Application download error:', error); link.textContent = original; alert(error.message || 'Download could not be prepared.');
     } finally { link.dataset.busy = '0'; }
   });
 
@@ -163,7 +198,7 @@
         button.title = 'Add to cart';
       }, 1400);
     } catch (error) {
-      console.warn('RecordStore quick add error:', error);
+      console.warn('Application quick add error:', error);
       button.textContent = original;
       alert(error.message || 'Could not add this track to your cart.');
     } finally {
@@ -194,7 +229,7 @@
         if (card) card.remove();
       }
     } catch (error) {
-      console.warn('RecordStore favourites error:', error);
+      console.warn('Application favourites error:', error);
       alert(error.message || 'Could not update your favourites.');
     } finally {
       button.disabled = false;
@@ -221,11 +256,11 @@
   });
 
 
-  // RecordStore styled confirmation for customer pending-order cancellation.
+  // Application styled confirmation for customer pending-order cancellation.
   let pendingCancelForm = null;
   document.addEventListener('click', event => {
     const open = event.target.closest('[data-cancel-order-open]');
-    const modal = document.getElementById('cancel-order-modal');
+    const modal = document.querySelector('[data-cancel-order-modal]');
     if (open && modal) {
       event.preventDefault();
       pendingCancelForm = open.closest('form[data-cancel-order-form]');
@@ -255,7 +290,7 @@
   });
 
   document.addEventListener('click', event => {
-    const modal = event.target.closest('#cancel-order-modal');
+    const modal = event.target.closest('[data-cancel-order-modal]');
     if (modal && event.target === modal) {
       if (typeof modal.close === 'function') modal.close();
       else modal.removeAttribute('open');
@@ -264,16 +299,16 @@
   });
 
   window.addEventListener('popstate', () => navigate(window.location.href, { push: false }));
-  // RecordStore styled confirmation for admin preview/master changes.
+  // Application styled confirmation for admin preview/master changes.
   let pendingAudioActionForm = null;
   document.addEventListener('click', event => {
     const open = event.target.closest('[data-audio-action-open]');
-    const modal = document.getElementById('audio-action-modal');
+    const modal = document.querySelector('[data-audio-action-modal]');
     if (open && modal) {
       event.preventDefault();
       pendingAudioActionForm = open.closest('form[data-audio-action-form]');
-      const title = modal.querySelector('#audio-action-modal-title');
-      const message = modal.querySelector('#audio-action-modal-message');
+      const title = modal.querySelector('[data-audio-action-title]');
+      const message = modal.querySelector('[data-audio-action-message]');
       if (title) title.textContent = open.dataset.audioActionTitle || 'Confirm audio action';
       if (message) message.textContent = open.dataset.audioActionMessage || 'Please confirm this audio file change.';
       if (typeof modal.showModal === 'function') modal.showModal();
@@ -307,12 +342,12 @@
 })();
 
 
-// RecordStore v1.13.4 mobile navigation
+// Application v1.13.4 mobile navigation
 document.addEventListener('click',function(e){const toggle=e.target.closest('.mobile-menu-toggle');const sidebar=document.querySelector('.sidebar');if(toggle&&sidebar){const open=sidebar.classList.toggle('mobile-menu-open');toggle.setAttribute('aria-expanded',open?'true':'false');const icon=toggle.querySelector('.mobile-menu-icon');if(icon)icon.textContent=open?'✕':'☰';return}if(e.target.closest('.mobile-nav-panel a')&&sidebar){sidebar.classList.remove('mobile-menu-open');const b=sidebar.querySelector('.mobile-menu-toggle');if(b){b.setAttribute('aria-expanded','false');const i=b.querySelector('.mobile-menu-icon');if(i)i.textContent='☰'}}});
 window.addEventListener('resize',function(){if(innerWidth>820){const s=document.querySelector('.sidebar');if(s)s.classList.remove('mobile-menu-open')}});
 
 
-// RecordStore v1.13.6 — lock the page behind the full-height mobile menu.
+// Application v1.13.6 — lock the page behind the full-height mobile menu.
 document.addEventListener('click', function (event) {
     if (event.target.closest('.mobile-menu-toggle')) {
         requestAnimationFrame(function () {
@@ -376,6 +411,89 @@ window.addEventListener('resize', function () {
     if (window.innerWidth > 820) document.body.classList.remove('mobile-nav-lock');
 });
 
-// RecordStore mobile flyout toggles
+// Application mobile flyout toggles
 document.addEventListener('click',function(e){if(window.innerWidth>820)return;const top=e.target.closest('.mobile-nav-panel .nav-flyout > .nav');if(!top)return;e.preventDefault();e.stopImmediatePropagation();const flyout=top.parentElement;const open=flyout.classList.toggle('is-open');top.setAttribute('aria-expanded',open?'true':'false')},true);
 
+// Searchable collaborative artist picker. The native multiple select remains
+// in the form as the submission and no-JavaScript fallback.
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('.review-preview-button').forEach(function (button) {
+    const textNode = Array.from(button.childNodes).find(function (node) { return node.nodeType === Node.TEXT_NODE && node.nodeValue.trim(); });
+    if (textNode) textNode.nodeValue = ' Play master track';
+    button.setAttribute('aria-label', 'Play private master track');
+  });
+  const artistInput = document.querySelector('.artist-submit-panel input[name="artist_name"]');
+  if (artistInput) {
+    const artistLabel = artistInput.closest('label');
+    if (artistLabel) {
+      artistLabel.title = 'Enter all contributing artist(s)';
+      if (artistLabel.firstChild && artistLabel.firstChild.nodeType === Node.TEXT_NODE) artistLabel.firstChild.nodeValue = 'Artist(s) ';
+      const hint = document.createElement('span');
+      hint.className = 'artist-field-tooltip';
+      hint.textContent = 'ⓘ';
+      hint.setAttribute('aria-label', 'Enter all contributing artist(s)');
+      hint.title = 'Enter all contributing artist(s)';
+      artistLabel.insertBefore(hint, artistInput);
+    }
+  }
+  document.querySelectorAll('form.track-upload-form select[name="artist_id"],form.admin-edit-form select[name="artist_id"]').forEach(function (select) {
+    const form = select.form;
+    if (select.closest('form.admin-edit-form') && !form.querySelector('button[name="action"][value="track_update"]')) return;
+    select.name = 'artist_ids[]';
+    select.multiple = true;
+    select.size = 4;
+    select.required = true;
+    if (!form || !form.matches('.admin-edit-form')) return;
+    const idInput = form.querySelector('input[name="id"]');
+    if (!idInput) return;
+    fetch(new URL('admin-track-artists.php?id=' + encodeURIComponent(idInput.value), window.location.href), {credentials:'same-origin'})
+      .then(function (response) { return response.ok ? response.json() : []; })
+      .then(function (ids) {
+        Array.from(select.options).forEach(function (option) { option.selected = ids.indexOf(Number(option.value)) !== -1; });
+        const picker = select.closest('.artist-picker');
+        if (picker) picker.querySelectorAll('input[type="checkbox"]').forEach(function (checkbox) { checkbox.checked = ids.indexOf(Number(checkbox.value)) !== -1; });
+        const search=select.closest('.artist-picker')?.querySelector('.artist-picker-search');
+        if(search)search.dispatchEvent(new Event('input',{bubbles:true}));
+      }).catch(function () {});
+  });
+  document.querySelectorAll('select[data-artist-picker][multiple],select[name="artist_ids[]"][multiple]').forEach(function (select) {
+    if (select.dataset.artistPickerReady) return;
+    select.dataset.artistPickerReady = '1';
+    const wrapper = document.createElement('div'); wrapper.className = 'artist-picker';
+    select.parentNode.insertBefore(wrapper, select); wrapper.appendChild(select); select.classList.add('artist-picker-source'); select.style.display = 'none';
+    const search = document.createElement('input'); search.type = 'search'; search.className = 'artist-picker-search'; search.placeholder = 'Search artists…'; search.autocomplete = 'off'; search.setAttribute('aria-label', 'Search artists');
+    const selectedBox = document.createElement('div'); selectedBox.className = 'artist-picker-selected';
+    const inputShell = document.createElement('div'); inputShell.className = 'artist-picker-input'; inputShell.append(selectedBox, search);
+    const list = document.createElement('div'); list.className = 'artist-picker-list'; list.setAttribute('role', 'listbox');
+    const options = Array.from(select.options).map(function (option) { const item=document.createElement('button'); item.type='button'; item.className='artist-picker-option'; item.dataset.artistName=option.textContent.trim().toLocaleLowerCase(); item.textContent=option.textContent.trim(); item.addEventListener('click',function(){option.selected=true;search.value='';render();search.focus();}); list.appendChild(item); return {option:option,item:item}; });
+    function render(){
+      selectedBox.replaceChildren();
+      Array.from(select.selectedOptions).forEach(function(option){const chip=document.createElement('span');chip.className='artist-picker-chip';chip.append(document.createTextNode(option.textContent.trim()));const remove=document.createElement('button');remove.type='button';remove.className='artist-picker-remove';remove.textContent='×';remove.title='Remove '+option.textContent.trim();remove.addEventListener('click',function(){option.selected=false;render();});chip.appendChild(remove);selectedBox.appendChild(chip);});
+      const query=search.value.trim().toLocaleLowerCase();let visible=0;options.forEach(function(entry){const match=!entry.option.selected&&query!==''&&entry.item.dataset.artistName.includes(query);entry.item.hidden=!match;if(match)visible++;});list.hidden=visible===0||query==='';select.dispatchEvent(new Event('change',{bubbles:true}));
+    }
+    search.addEventListener('focus',render); search.addEventListener('input',render); search.addEventListener('blur',function(){setTimeout(render,150);}); wrapper.insertBefore(inputShell,select); wrapper.insertBefore(list,select); render();
+  });
+});
+
+document.addEventListener('click',function(e){
+  const link=e.target.closest('.admin-nav-submenu a,.nav-submenu a');
+  if(!link)return;
+  const flyout=link.closest('.admin-nav-flyout,.nav-flyout');
+  if(flyout){
+    flyout.classList.remove('is-open');
+    flyout.classList.add('is-closed');
+    const submenu=flyout.querySelector(':scope > .admin-nav-submenu,:scope > .nav-submenu');
+    if(submenu){submenu.hidden=true;submenu.style.display='none';}
+    const top=flyout.querySelector(':scope > .nav');
+    if(top)top.setAttribute('aria-expanded','false');
+    link.blur();
+  }
+},true);
+document.addEventListener('pointerenter',function(e){
+  const flyout=e.target.closest('.admin-nav-flyout,.nav-flyout');
+  if(flyout){
+    flyout.classList.remove('is-closed');
+    const submenu=flyout.querySelector(':scope > .admin-nav-submenu,:scope > .nav-submenu');
+    if(submenu){submenu.hidden=false;submenu.style.display='';}
+  }
+},true);
