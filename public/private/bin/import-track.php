@@ -1,0 +1,11 @@
+<?php
+if(PHP_SAPI!=='cli')exit("CLI only\n");
+require __DIR__.'/../src/bootstrap.php';
+function ask($q){echo $q;return trim((string)fgets(STDIN));}
+$artistId=(int)ask('Artist ID: ');$releaseRaw=ask('Optional Release ID [none]: ');$releaseId=$releaseRaw!==''?(int)$releaseRaw:null;$genreId=(int)ask('Genre ID [none]: ');
+$title=ask('Track title: ');$mix=ask('Mix name [Original Mix]: ')?:'Original Mix';$bpm=(int)ask('BPM: ');$price=(int)ask('Price in pence [149]: ');if(!$price)$price=149;$releaseDate=ask('Release date YYYY-MM-DD [today]: ')?:date('Y-m-d');
+$source=ask('Full path to master MP3/WAV: ');if(!is_file($source))exit("Master not found.\n");
+$ext=strtolower(pathinfo($source,PATHINFO_EXTENSION));$safe=bin2hex(random_bytes(10)).'.'.$ext;$dest=$config['paths']['masters'].'/'.$safe;if(!copy($source,$dest))exit("Copy failed.\n");
+$preview='';$make=strtolower(ask('Generate 90 sec preview from 3 x 30 sec sections with ffmpeg? [y/N]: '));
+if($make==='y'){$starts=[ask('Section 1 start: '),ask('Section 2 start: '),ask('Section 3 start: ')];$preview=bin2hex(random_bytes(10)).'-preview.m4a';$tmp=[];foreach($starts as $i=>$start){$tmp[$i]=sys_get_temp_dir().'/afd_'.bin2hex(random_bytes(5))."_$i.mp3";run_ffmpeg(['-hide_banner','-loglevel','error','-y','-ss',$start,'-i',$source,'-t','30','-vn','-codec:a','libmp3lame','-b:a','192k','-ar','44100','-ac','2',$tmp[$i]]);} $list=sys_get_temp_dir().'/afd_'.bin2hex(random_bytes(5)).'.txt';file_put_contents($list,implode("\n",array_map(fn($f)=>"file '".str_replace("'","'\\''",$f)."'",$tmp))."\n");$out=$config['paths']['previews'].'/'.$preview;run_ffmpeg(['-hide_banner','-loglevel','error','-y','-f','concat','-safe','0','-i',$list,'-vn','-codec:a','aac','-b:a','192k','-ar','44100','-ac','2','-movflags','+faststart',$out]);foreach($tmp as $f)@unlink($f);@unlink($list);}
+$mime=$ext==='wav'?'audio/wav':'audio/mpeg';$fileName=ask('Customer download filename: ')?:basename($source);$st=$pdo->prepare('INSERT INTO tracks(release_id,artist_id,genre_id,title,mix_name,bpm,price_pence,master_path,preview_path,file_name,mime_type,file_size,release_date) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)');$st->execute([$releaseId,$artistId,$genreId?:null,$title,$mix,$bpm?:null,$price,$safe,$preview?:null,$fileName,$mime,filesize($dest),$releaseDate]);echo "Track imported with ID ".$pdo->lastInsertId()."\n";
