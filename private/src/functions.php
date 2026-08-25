@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 function e(mixed $value): string { return htmlspecialchars((string)($value ?? ''), ENT_QUOTES, 'UTF-8'); }
+function asset_url(string $path): string { global $config; $path=ltrim($path,'/'); $base=(string)($config['app']['base_url']??''); $basePath=(string)(parse_url($base,PHP_URL_PATH)??''); return rtrim('/'.trim($basePath,'/'),'/').'/'.$path; }
 function url(string $path=''): string { global $config; $path=ltrim($path,'/'); $aliases=['account.php'=>'account','cart.php'=>'cart','checkout.php'=>'checkout','paypal-resume.php'=>'paypal-resume','favourites.php'=>'favourites','login.php'=>'login','logout.php'=>'logout','register.php'=>'register','newsletter.php'=>'newsletter','new-releases.php'=>'new-releases','artist-submit.php'=>'artist-submit','artist-management.php'=>'artist-management','terms.php'=>'terms','privacy.php'=>'privacy','refunds.php'=>'refunds','cookies.php'=>'cookies']; foreach($aliases as $from=>$to){if($path===$from||str_starts_with($path,$from.'?')){$path=$to.substr($path,strlen($from));break;}} if(str_starts_with($path,'receipt.php?order=')){$path='receipt/'.rawurlencode(substr($path,strlen('receipt.php?order=')));} return rtrim($config['app']['base_url'],'/').'/'.$path; }
 function recordstore_build_version(): string { return '1.13.5'; }
 function recordstore_preview_format(): string { return 'M4A / AAC (faststart)'; }
@@ -78,7 +79,7 @@ function artist_credit_from_ids(array $ids): string { $ids=array_values(array_un
 function track_artist_ids(int $trackId): array { if($trackId<=0)return []; try{$st=$GLOBALS['pdo']->prepare('SELECT artist_id FROM track_artists WHERE track_id=? ORDER BY sort_order,artist_id');$st->execute([$trackId]);$ids=array_map('intval',$st->fetchAll(PDO::FETCH_COLUMN));if($ids)return $ids;$st=$GLOBALS['pdo']->prepare('SELECT artist_id FROM tracks WHERE id=?');$st->execute([$trackId]);$primary=(int)($st->fetchColumn()?:0);return $primary?[$primary]:[];}catch(Throwable $ignored){return [];} }
 
 function artwork_url(?string $path): string {
-    if(!$path){$fallback=site_theme()['default_artwork']??'';return $fallback!==''?(filter_var($fallback,FILTER_VALIDATE_URL)?$fallback:url(ltrim($fallback,'/'))):url('assets/images/empty-art.svg');}
+    if(!$path){$fallback=site_theme()['default_artwork']??'';return $fallback!==''?(filter_var($fallback,FILTER_VALIDATE_URL)?$fallback:url(ltrim($fallback,'/'))):asset_url('assets/images/empty-art.svg');}
     return url('media.php?type=artwork&f='.rawurlencode($path));
 }
 function artist_image_url(?string $path): string { return $path ? artwork_url($path) : url('assets/images/artist-placeholder.svg'); }
@@ -170,10 +171,10 @@ function layout_header(string $title=''): void {
     ?><!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="theme-color" content="<?=e(site_theme()['bg'])?>"><style>:root{--bg:<?=e(site_theme()['bg'])?>;--panel:<?=e(site_theme()['panel'])?>;--text:<?=e(site_theme()['text'])?>;--muted:<?=e(site_theme()['muted'])?>;--purple:<?=e(site_theme()['accent'])?>;--purple2:<?=e(site_theme()['accent2'])?>;font-family:<?=e(site_theme()['font'])?>;--heading-font:<?=e(site_theme()['heading_font'])?>;--ui-font:<?=e(site_theme()['ui_font'])?>;--mono-font:<?=e(site_theme()['mono_font'])?>;--display-font:<?=e(site_theme()['display_font'])?>;--section-font:<?=e(site_theme()['section_font'])?>;--card-font:<?=e(site_theme()['card_font'])?>;--meta-font:<?=e(site_theme()['meta_font'])?>;--label-font:<?=e(site_theme()['label_font'])?>;--button-font:<?=e(site_theme()['button_font'])?>}.hero h1{font-family:var(--display-font)}.section-title h1,.section-title h2{font-family:var(--section-font)}.release-info h3,.track-row h3{font-family:var(--card-font)}.hero p,.release-info p,.track-row small,.player-meta span{font-family:var(--meta-font)}.kicker,.eyebrow,.nav{font-family:var(--label-font)}.button,button{font-family:var(--button-font)}input,textarea,select{font-family:var(--ui-font)}h1,h2,h3{font-family:var(--heading-font)}code{font-family:var(--mono-font)}</style><meta name="description" content="<?=e($metaDescription)?>"><link rel="canonical" href="<?=e($canonicalUrl)?>"><meta property="og:site_name" content="<?=e($name)?>"><meta property="og:locale" content="en_GB"><meta property="og:title" content="<?=e($metaTitle)?>"><meta property="og:description" content="<?=e($metaDescription)?>"><meta property="og:url" content="<?=e($canonicalUrl)?>"><meta property="og:type" content="<?=e($metaType)?>"><meta property="og:image" content="<?=e($metaImage)?>"><meta property="og:image:alt" content="<?=e($metaImageAlt)?>"><meta property="og:image:type" content="<?=e($metaImageType)?>"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="<?=e($metaTitle)?>"><meta name="twitter:description" content="<?=e($metaDescription)?>"><meta name="twitter:image" content="<?=e($metaImage)?>"><?php if($metaStructured):?><script type="application/ld+json"><?=json_encode($metaStructured,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_HEX_TAG|JSON_HEX_AMP)?></script><?php endif;?><script>window.pagespeed=window.pagespeed||{};window.pagespeed.CriticalImages=window.pagespeed.CriticalImages||{checkImageForCriticality:function(){}};</script>
     <title><?=e($metaTitle)?></title>
-    <link rel="icon" href="<?=e(url('assets/images/favicon.svg'))?>" type="image/svg+xml">
-    <link rel="stylesheet" href="<?=e(url('assets/css/app.css?v=1.13.65'))?>"></head><body data-app-name="<?=e($name)?>" data-store-key="<?=e(store_identifier($name))?>">
+    <link rel="icon" href="<?=e(asset_url('assets/images/favicon.svg'))?>" type="image/svg+xml">
+    <link rel="stylesheet" href="<?=e(asset_url('assets/css/app.css?v=1.13.65'))?>"></head><body data-app-name="<?=e($name)?>" data-store-key="<?=e(store_identifier($name))?>">
     <div class="shell"><aside class="sidebar">
-      <a class="brand" href="<?=e(url(''))?>"><img src="<?=e(url('assets/images/logo.svg'))?>" alt=""><span class="brand-name"><?=e($name)?></span></a>
+      <a class="brand" href="<?=e(url(''))?>"><img src="<?=e(asset_url('assets/images/logo.svg'))?>" alt=""><span class="brand-name"><?=e($name)?></span></a>
       <button class="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="mobileSiteNav"><span class="mobile-menu-icon">☰</span><span>Menu</span></button>
       <?php $navGenres=$pdo->query('SELECT id,name,slug FROM genres ORDER BY name')->fetchAll(); ?>
       <div id="mobileSiteNav" class="mobile-nav-panel"><nav class="side-nav" data-shell-state="<?=e($shellState)?>">
@@ -202,7 +203,7 @@ function layout_footer(): void { ?>
     <footer class="site-footer"><nav class="legal-links" aria-label="Legal"><a href="<?=e(url('support'))?>">Customer support</a><a href="<?=e(url('terms.php'))?>">Terms &amp; licensing</a><a href="<?=e(url('refunds.php'))?>">Refund policy</a><a href="<?=e(url('privacy.php'))?>">Privacy</a><a href="<?=e(url('cookies.php'))?>">Cookies</a></nav></footer>
     </main></div>
     <div id="audioPlayer" class="audio-player" hidden>
-      <div class="player-art-wrap"><img id="playerArt" src="<?=e(url('assets/images/empty-art.svg'))?>" alt=""><span class="preview-chip">90 SEC PREVIEW</span></div>
+      <div class="player-art-wrap"><img id="playerArt" src="<?=e(asset_url('assets/images/empty-art.svg'))?>" alt=""><span class="preview-chip">90 SEC PREVIEW</span></div>
       <div class="player-info">
         <div class="player-heading"><div class="player-meta"><strong id="playerTitle">Preview</strong><span id="playerArtist"></span></div><span id="playerState" class="player-state">READY</span></div>
         <div id="playerSpectrumWrap" class="player-spectrum-wrap" title="Click anywhere to seek through the preview">
@@ -213,7 +214,7 @@ function layout_footer(): void { ?>
       </div>
       <div class="player-controls"><button id="playerBack" class="player-icon" aria-label="Restart preview" title="Restart">↶</button><button id="playerToggle" class="player-toggle" aria-label="Play or pause preview">▶</button><button id="playerMute" class="player-icon" aria-label="Mute preview" title="Mute">◕</button></div><button id="playerClose" class="player-close" type="button" aria-label="Close preview player" title="Close preview player">×</button>
     </div>
-    <script src="<?=e(url('assets/js/app.js?v=1.13.57'))?>"></script><script src="<?=e(url('assets/js/player.js?v=1.13.57'))?>"></script></body></html><?php }
+    <script src="<?=e(asset_url('assets/js/app.js?v=1.13.57'))?>"></script><script src="<?=e(asset_url('assets/js/player.js?v=1.13.57'))?>"></script></body></html><?php }
 
 function track_artwork_path(array $t): ?string {
     return $t['track_artwork_path'] ?? $t['artwork_path'] ?? $t['release_artwork_path'] ?? null;
