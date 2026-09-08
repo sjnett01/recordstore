@@ -109,7 +109,9 @@
     let buffered = 0;
     if (d && audio.buffered.length) buffered = Math.min(d, audio.buffered.end(audio.buffered.length - 1));
     const percent = d ? Math.max(0, Math.min(100, Math.round((buffered / d) * 100))) : 0;
-    setLoadProgress(percent);
+    const fullyBuffered = d > 0 && buffered >= d - 0.05;
+    setLoadProgress(fullyBuffered ? 100 : percent);
+    if (fullyBuffered) setLoadMode(activeIsFullTrack, true);
   };
 
   const canSeekNow = () => audio.readyState >= HTMLMediaElement.HAVE_METADATA && Number.isFinite(audio.duration) && audio.duration > 0;

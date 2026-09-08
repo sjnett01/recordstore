@@ -214,7 +214,7 @@ function layout_footer(): void { ?>
       </div>
       <div class="player-controls"><button id="playerBack" class="player-icon" aria-label="Restart preview" title="Restart">↶</button><button id="playerToggle" class="player-toggle" aria-label="Play or pause preview">▶</button><button id="playerMute" class="player-icon" aria-label="Mute preview" title="Mute">◕</button></div><button id="playerClose" class="player-close" type="button" aria-label="Close preview player" title="Close preview player">×</button>
     </div>
-    <script src="<?=e(asset_url('assets/js/app.js?v=1.13.59'))?>"></script><script src="<?=e(asset_url('assets/js/player.js?v=1.13.59'))?>"></script></body></html><?php }
+    <script src="<?=e(asset_url('assets/js/app.js?v=1.13.61'))?>"></script><script src="<?=e(asset_url('assets/js/player.js?v=1.13.61'))?>"></script></body></html><?php }
 
 function track_artwork_path(array $t): ?string {
     return $t['track_artwork_path'] ?? $t['artwork_path'] ?? $t['release_artwork_path'] ?? null;
