@@ -1,10 +1,11 @@
+const closestElement = (target, selector) => target instanceof Element ? target.closest(selector) : null;
+
 (() => {
   'use strict';
 
   const contentSelector = '.content';
   let navigating = false;
   let navController = null;
-  const closestElement = (target, selector) => target instanceof Element ? target.closest(selector) : null;
 
   const sameOrigin = url => url.origin === window.location.origin;
   const isHtmlNavigation = anchor => {

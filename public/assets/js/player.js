@@ -2,7 +2,6 @@
   'use strict';
 
   const root = document.getElementById('audioPlayer');
-  const closestElement = (target, selector) => target instanceof Element ? target.closest(selector) : null;
   if (!root) return;
 
   const toggle = document.getElementById('playerToggle');
@@ -59,12 +58,14 @@
   let analyticsCompleted = false;
   let analyticsLastSeek = -1;
 
+  const analyticsUrl = document.body?.dataset.previewAnalyticsUrl || 'preview-analytics.php';
+
   const sendPreviewAnalytics = (eventType, values = {}) => {
     if (activeIsFullTrack || !analyticsTrackId) return;
     const payload = JSON.stringify({track_id: analyticsTrackId, event_type: eventType, position_seconds: Math.round((values.position_seconds ?? audio.currentTime ?? 0) * 100) / 100, duration_seconds: Math.round((values.duration_seconds ?? safeDuration()) * 100) / 100, section_seconds: Math.floor((values.section_seconds ?? audio.currentTime ?? 0) / 10) * 10});
     try {
-      if (navigator.sendBeacon) { navigator.sendBeacon('preview-analytics.php', new Blob([payload], {type: 'application/json'})); return; }
-      fetch('preview-analytics.php', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: payload, keepalive: true}).catch(() => {});
+      if (navigator.sendBeacon) { navigator.sendBeacon(analyticsUrl, new Blob([payload], {type: 'application/json'})); return; }
+      fetch(analyticsUrl, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: payload, keepalive: true}).catch(() => {});
     } catch (_) {}
   };
   const storageKey = `${document.body?.dataset.storeKey || 'store'}.player.v16`;
