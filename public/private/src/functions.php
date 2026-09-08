@@ -132,7 +132,7 @@ function apply_audio_metadata(string $path,string $artist,string $title,?string 
 function standardize_stored_audio(array $stored,string $artist,string $title,?string $genre,?int $bpm,?string $mixName=null): array {
     $trackId=(int)($_POST['id']??0);if($trackId>0){try{$st=$GLOBALS['pdo']->prepare('SELECT a.name FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=? ORDER BY ta.sort_order,ta.artist_id');$st->execute([$trackId]);$names=$st->fetchAll(PDO::FETCH_COLUMN);if($names)$artist=implode(' x ',array_map('strval',$names));}catch(Throwable $ignored){}}
     if(!empty($_POST['artist_ids'])&&is_array($_POST['artist_ids'])){try{$ids=array_values(array_unique(array_filter(array_map('intval',$_POST['artist_ids']))));if($ids){$ph=implode(',',array_fill(0,count($ids),'?'));$st=$GLOBALS['pdo']->prepare("SELECT id,name FROM artists WHERE id IN ($ph)");$st->execute($ids);$byId=[];foreach($st->fetchAll() as $row)$byId[(int)$row['id']]=(string)$row['name'];$ordered=[];foreach($ids as $id)if(isset($byId[$id]))$ordered[]=$byId[$id];if($ordered)$artist=implode(' x ',$ordered);}}catch(Throwable $ignored){}}
-    apply_audio_metadata((string)$stored['master_full_path'],$artist,$title,$genre,$bpm,$mixName);
+    if (($GLOBALS['config']['app']['preview_mode'] ?? 'auto') !== 'manual') apply_audio_metadata((string)$stored['master_full_path'],$artist,$title,$genre,$bpm,$mixName);
     $extension=pathinfo((string)($stored['master_path']??$stored['file_name']??''),PATHINFO_EXTENSION)?:'mp3';
     $stored['file_name']=standardized_track_filename($artist,$title,$mixName,$extension);
     return $stored;
@@ -214,7 +214,7 @@ function layout_footer(): void { ?>
       </div>
       <div class="player-controls"><button id="playerBack" class="player-icon" aria-label="Restart preview" title="Restart">↶</button><button id="playerToggle" class="player-toggle" aria-label="Play or pause preview">▶</button><button id="playerMute" class="player-icon" aria-label="Mute preview" title="Mute">◕</button></div><button id="playerClose" class="player-close" type="button" aria-label="Close preview player" title="Close preview player">×</button>
     </div>
-    <script src="<?=e(asset_url('assets/js/app.js?v=1.13.57'))?>"></script><script src="<?=e(asset_url('assets/js/player.js?v=1.13.57'))?>"></script></body></html><?php }
+    <script src="<?=e(asset_url('assets/js/app.js?v=1.13.58'))?>"></script><script src="<?=e(asset_url('assets/js/player.js?v=1.13.58'))?>"></script></body></html><?php }
 
 function track_artwork_path(array $t): ?string {
     return $t['track_artwork_path'] ?? $t['artwork_path'] ?? $t['release_artwork_path'] ?? null;
@@ -394,7 +394,15 @@ function regenerate_preview_from_stored_master(string $masterRelativePath, array
     return generate_preview_from_master($candidate, $starts);
 }
 
-function store_uploaded_master_and_preview(array $file, array $starts): array {
+function store_uploaded_manual_preview(array $file): array {
+    global $config;
+    $error=(int)($file['error']??UPLOAD_ERR_NO_FILE); if($error!==UPLOAD_ERR_OK) throw new RuntimeException('A manual preview upload is required when automatic preview generation is disabled.');
+    $size=(int)($file['size']??0); $max=(int)($config['app']['preview_upload_max_bytes']??67108864); if($size<1||$size>$max) throw new RuntimeException('Preview must be smaller than '.round($max/1048576).' MB.'); if(!is_uploaded_file($file['tmp_name']??'')) throw new RuntimeException('Invalid preview upload.');
+    $mime=(new finfo(FILEINFO_MIME_TYPE))->file($file['tmp_name']); $allowed=['audio/mpeg'=>'mp3','audio/mp3'=>'mp3','audio/mp4'=>'m4a','video/mp4'=>'m4a','audio/x-m4a'=>'m4a','audio/aac'=>'aac','audio/wav'=>'wav','audio/x-wav'=>'wav']; if(!isset($allowed[$mime])) throw new RuntimeException('Preview must be an MP3, M4A/AAC or WAV file.');
+    $root=rtrim($config['paths']['previews'],'/'); if(!is_dir($root)&&!mkdir($root,0755,true)) throw new RuntimeException('Preview directory is unavailable.'); if(!is_writable($root)) throw new RuntimeException('Preview directory is not writable by PHP-FPM.'); $name=bin2hex(random_bytes(16)).'-preview.'.$allowed[$mime]; $path=$root.'/'.$name; if(!move_uploaded_file($file['tmp_name'],$path)) throw new RuntimeException('Could not move the preview into public storage.'); @chmod($path,0644); return ['preview_path'=>$name,'preview_full_path'=>$path];
+}
+
+function store_uploaded_master_and_preview(array $file, array $starts, ?array $manualPreview=null): array {
     global $config;
     $error = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
     if ($error !== UPLOAD_ERR_OK) throw new RuntimeException(audio_upload_error_message($error));
@@ -429,7 +437,7 @@ function store_uploaded_master_and_preview(array $file, array $starts): array {
     @chmod($masterPath, 0640);
 
     try {
-        $preview = generate_preview_from_master($masterPath, $starts);
+        $preview = (($config['app']['preview_mode'] ?? 'auto') === 'manual') ? store_uploaded_manual_preview($manualPreview ?? []) : generate_preview_from_master($masterPath, $starts);
     } catch (Throwable $e) {
         @unlink($masterPath);
         throw $e;

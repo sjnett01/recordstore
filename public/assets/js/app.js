@@ -4,6 +4,7 @@
   const contentSelector = '.content';
   let navigating = false;
   let navController = null;
+  const closestElement = (target, selector) => target instanceof Element ? target.closest(selector) : null;
 
   const sameOrigin = url => url.origin === window.location.origin;
   const isHtmlNavigation = anchor => {
@@ -130,7 +131,7 @@
   };
 
   document.addEventListener('click', async event => {
-    const link = event.target.closest('a.download-action[data-item]');
+    const link = closestElement(event.target, 'a.download-action[data-item]');
     if (!link || event.defaultPrevented) return;
     event.preventDefault();
     if (link.dataset.busy === '1') return;
@@ -157,7 +158,7 @@
 
   document.addEventListener('click', event => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    const anchor = event.target.closest('a');
+    const anchor = closestElement(event.target, 'a');
     if (!isHtmlNavigation(anchor)) return;
     event.preventDefault();
     navigate(anchor.href);
@@ -259,7 +260,7 @@
   // Application styled confirmation for customer pending-order cancellation.
   let pendingCancelForm = null;
   document.addEventListener('click', event => {
-    const open = event.target.closest('[data-cancel-order-open]');
+    const open = closestElement(event.target, '[data-cancel-order-open]');
     const modal = document.querySelector('[data-cancel-order-modal]');
     if (open && modal) {
       event.preventDefault();
@@ -271,7 +272,7 @@
       return;
     }
 
-    if (event.target.closest('[data-cancel-order-close]') && modal) {
+    if (closestElement(event.target, '[data-cancel-order-close]') && modal) {
       event.preventDefault();
       if (typeof modal.close === 'function') modal.close();
       else modal.removeAttribute('open');
@@ -279,7 +280,7 @@
       return;
     }
 
-    if (event.target.closest('[data-cancel-order-confirm]') && modal) {
+    if (closestElement(event.target, '[data-cancel-order-confirm]') && modal) {
       event.preventDefault();
       const form = pendingCancelForm;
       pendingCancelForm = null;
@@ -290,7 +291,7 @@
   });
 
   document.addEventListener('click', event => {
-    const modal = event.target.closest('[data-cancel-order-modal]');
+    const modal = closestElement(event.target, '[data-cancel-order-modal]');
     if (modal && event.target === modal) {
       if (typeof modal.close === 'function') modal.close();
       else modal.removeAttribute('open');
@@ -302,7 +303,7 @@
   // Application styled confirmation for admin preview/master changes.
   let pendingAudioActionForm = null;
   document.addEventListener('click', event => {
-    const open = event.target.closest('[data-audio-action-open]');
+    const open = closestElement(event.target, '[data-audio-action-open]');
     const modal = document.querySelector('[data-audio-action-modal]');
     if (open && modal) {
       event.preventDefault();
@@ -315,13 +316,13 @@
       else modal.setAttribute('open', '');
       return;
     }
-    if (event.target.closest('[data-audio-action-close]') && modal) {
+    if (closestElement(event.target, '[data-audio-action-close]') && modal) {
       event.preventDefault();
       if (typeof modal.close === 'function') modal.close(); else modal.removeAttribute('open');
       pendingAudioActionForm = null;
       return;
     }
-    if (event.target.closest('[data-audio-action-confirm]') && modal) {
+    if (closestElement(event.target, '[data-audio-action-confirm]') && modal) {
       event.preventDefault();
       const form = pendingAudioActionForm;
       pendingAudioActionForm = null;
@@ -333,7 +334,7 @@
     }
   });
   document.addEventListener('click', event => {
-    const modal = event.target.closest('#audio-action-modal');
+    const modal = closestElement(event.target, '#audio-action-modal');
     if (modal && event.target === modal) {
       if (typeof modal.close === 'function') modal.close(); else modal.removeAttribute('open');
       pendingAudioActionForm = null;
@@ -343,19 +344,19 @@
 
 
 // Application v1.13.4 mobile navigation
-document.addEventListener('click',function(e){const toggle=e.target.closest('.mobile-menu-toggle');const sidebar=document.querySelector('.sidebar');if(toggle&&sidebar){const open=sidebar.classList.toggle('mobile-menu-open');toggle.setAttribute('aria-expanded',open?'true':'false');const icon=toggle.querySelector('.mobile-menu-icon');if(icon)icon.textContent=open?'✕':'☰';return}if(e.target.closest('.mobile-nav-panel a')&&sidebar){sidebar.classList.remove('mobile-menu-open');const b=sidebar.querySelector('.mobile-menu-toggle');if(b){b.setAttribute('aria-expanded','false');const i=b.querySelector('.mobile-menu-icon');if(i)i.textContent='☰'}}});
+document.addEventListener('click',function(e){const toggle=closestElement(e.target, '.mobile-menu-toggle');const sidebar=document.querySelector('.sidebar');if(toggle&&sidebar){const open=sidebar.classList.toggle('mobile-menu-open');toggle.setAttribute('aria-expanded',open?'true':'false');const icon=toggle.querySelector('.mobile-menu-icon');if(icon)icon.textContent=open?'✕':'☰';return}if(closestElement(e.target, '.mobile-nav-panel a')&&sidebar){sidebar.classList.remove('mobile-menu-open');const b=sidebar.querySelector('.mobile-menu-toggle');if(b){b.setAttribute('aria-expanded','false');const i=b.querySelector('.mobile-menu-icon');if(i)i.textContent='☰'}}});
 window.addEventListener('resize',function(){if(innerWidth>820){const s=document.querySelector('.sidebar');if(s)s.classList.remove('mobile-menu-open')}});
 
 
 // Application v1.13.6 — lock the page behind the full-height mobile menu.
 document.addEventListener('click', function (event) {
-    if (event.target.closest('.mobile-menu-toggle')) {
+    if (closestElement(event.target, '.mobile-menu-toggle')) {
         requestAnimationFrame(function () {
             const sidebar = document.querySelector('.sidebar');
             document.body.classList.toggle('mobile-nav-lock', !!(sidebar && sidebar.classList.contains('mobile-menu-open')));
         });
     }
-    if (event.target.closest('.mobile-nav-panel a')) {
+    if (closestElement(event.target, '.mobile-nav-panel a')) {
         document.body.classList.remove('mobile-nav-lock');
     }
 });
@@ -383,7 +384,7 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 
 document.addEventListener('click', async function (event) {
-  const trigger = event.target.closest('[data-share-page]');
+  const trigger = closestElement(event.target, '[data-share-page]');
   if (!trigger) return;
   event.preventDefault();
   const decode = value => { try { return decodeURIComponent(value); } catch (_) { return value; } };
@@ -412,7 +413,7 @@ window.addEventListener('resize', function () {
 });
 
 // Application mobile flyout toggles
-document.addEventListener('click',function(e){if(window.innerWidth>820)return;const top=e.target.closest('.mobile-nav-panel .nav-flyout > .nav');if(!top)return;e.preventDefault();e.stopImmediatePropagation();const flyout=top.parentElement;const open=flyout.classList.toggle('is-open');top.setAttribute('aria-expanded',open?'true':'false')},true);
+document.addEventListener('click',function(e){if(window.innerWidth>820)return;const top=closestElement(e.target, '.mobile-nav-panel .nav-flyout > .nav');if(!top)return;e.preventDefault();e.stopImmediatePropagation();const flyout=top.parentElement;const open=flyout.classList.toggle('is-open');top.setAttribute('aria-expanded',open?'true':'false')},true);
 
 // Searchable collaborative artist picker. The native multiple select remains
 // in the form as the submission and no-JavaScript fallback.
@@ -476,7 +477,7 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 
 document.addEventListener('click',function(e){
-  const link=e.target.closest('.admin-nav-submenu a,.nav-submenu a');
+  const link=closestElement(e.target, '.admin-nav-submenu a,.nav-submenu a');
   if(!link)return;
   const flyout=link.closest('.admin-nav-flyout,.nav-flyout');
   if(flyout){
@@ -490,7 +491,7 @@ document.addEventListener('click',function(e){
   }
 },true);
 document.addEventListener('pointerenter',function(e){
-  const flyout=e.target.closest('.admin-nav-flyout,.nav-flyout');
+  const flyout=closestElement(e.target, '.admin-nav-flyout,.nav-flyout');
   if(flyout){
     flyout.classList.remove('is-closed');
     const submenu=flyout.querySelector(':scope > .admin-nav-submenu,:scope > .nav-submenu');

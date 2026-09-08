@@ -2,6 +2,7 @@
   'use strict';
 
   const root = document.getElementById('audioPlayer');
+  const closestElement = (target, selector) => target instanceof Element ? target.closest(selector) : null;
   if (!root) return;
 
   const toggle = document.getElementById('playerToggle');
@@ -66,8 +67,7 @@
       fetch('preview-analytics.php', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: payload, keepalive: true}).catch(() => {});
     } catch (_) {}
   };
-
-  const storageKey = ${document.body?.dataset.storeKey || 'store'}.player.v16;
+  const storageKey = `${document.body?.dataset.storeKey || 'store'}.player.v16`;
   const fmt = seconds => {
     if (!Number.isFinite(seconds)) return '0:00';
     seconds = Math.max(0, Math.floor(seconds));
@@ -481,7 +481,7 @@
   });
 
   document.addEventListener('click', async event => {
-    const button = event.target.closest('[data-preview]');
+    const button = closestElement(event.target, '[data-preview]');
     if (!button) return;
     event.preventDefault();
     try { await loadTrack(button); }

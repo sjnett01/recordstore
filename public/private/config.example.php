@@ -8,8 +8,9 @@ return [
         'download_limit_default' => 3,
         // Keep false on a live store. Set true only while testing the included demo checkout.
         'demo_checkout' => false,
-        'ffmpeg_path' => '/usr/bin/ffmpeg',
-        'ffprobe_path' => '/usr/bin/ffprobe',
+        'preview_mode' => 'auto',
+        'ffmpeg_path' => '',
+        'ffprobe_path' => '',
         // Optional override. Relative paths resolve from the private application directory.
         // 'montage_fx_dir' => 'assets/montage',
         'master_upload_max_bytes' => 536870912, // 512 MB
